@@ -215,6 +215,37 @@ cpack
 cmake --build build-cmake --target clean
 ```
 
+## Android
+Requires the Android SDK with NDK `27.2.12479018` and CMake `3.31.6` (Android Studio installs both on first sync), JDK 17 or newer, and a desktop build environment for generating `lighthouse.o2r` (see the Linux or macOS section).
+
+The game is built as `libmain.so` and started by SDL's `SDLActivity`. Only `arm64-v8a` is built.
+
+```bash
+# Clone the repo and its submodules
+git clone https://github.com/HarbourMasters/lighthouse.git
+cd lighthouse
+git submodule update --init
+
+# Generate lighthouse.o2r (port-specific assets) with a desktop build; it is bundled into the APK
+cmake -H. -Bbuild-cmake -GNinja
+cmake --build build-cmake --target GeneratePortO2R
+
+# Build the APK (or open the android folder in Android Studio)
+cd android
+./gradlew assembleRelease
+# Pass -PlighthouseO2r=/path/to/lighthouse.o2r to use a lighthouse.o2r from elsewhere, such as a CI artifact
+
+# Install it on a connected device
+adb install -r app/build/outputs/apk/release/app-release.apk
+```
+
+The release APK is signed with the debug key so it can be sideloaded. Use your own signing config to distribute it.
+
+### Playing
+On first launch Lighthouse asks for your ROM with the system file picker, copies it into the app's data folder and extracts `bk.o2r` there. Saves, settings, `mods` and `bk.o2r` live in `Android/data/com.harbourmasters.lighthouse/files/`, which you can also reach over USB to add mods or a ROM by hand.
+
+There are no on-screen touch controls yet, so play with a Bluetooth or USB controller. The phone's Back button (or ESC on a keyboard) opens the menu, which you can use by touch or with the controller.
+
 # Compatible Roms
 Any retail version. See [the readme](https://github.com/HarbourMasters/Lighthouse/blob/develop/README.md#1-verify-your-rom-dump)
 

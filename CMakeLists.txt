@@ -160,6 +160,16 @@ endif()
 # Set game compilation version
 set(VERSION us)
 option(USE_NETWORKING "Enable networking features" ON)
+
+if (ANDROID)
+    # Android only provides OpenGL ES, and SDL loads the game from libmain.so
+    set(USE_OPENGLES ON CACHE BOOL "Enable GLES3" FORCE)
+    # Link dependencies into libmain.so. SDLActivity loads libSDL2.so itself, so SDL stays shared.
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared libraries" FORCE)
+    set(SDL_SHARED ON CACHE BOOL "" FORCE)
+    set(SDL_STATIC OFF CACHE BOOL "" FORCE)
+    set(SDL_TEST OFF CACHE BOOL "" FORCE)
+endif()
 set(SKIP_XCODE_VERSION_CHECK ON)
 
 # Add compile definitions for the target
@@ -178,7 +188,7 @@ add_compile_definitions(
 )
 
 # Find necessary libraries
-if (UNIX AND NOT APPLE)
+if (UNIX AND NOT APPLE AND NOT ANDROID)
     find_package(OpenGL REQUIRED)
 endif()
 
@@ -253,6 +263,11 @@ if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
         MACOSX_BUNDLE_INFO_PLIST ${IOS_DIR}/plist.in
         RESOURCE "${IMAGE_FILES};${STORYBOARD_FILE};${ICON_FILES}"
     )
+elseif (ANDROID)
+    add_library(${PROJECT_NAME} SHARED ${ALL_FILES})
+    set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME main)
+    # The NDK makes -Wformat-security an error; desktop builds only warn
+    target_compile_options(${PROJECT_NAME} PRIVATE -Wno-error=format-security)
 else()
     add_executable(${PROJECT_NAME} ${ALL_FILES})
 endif()
@@ -443,6 +458,23 @@ if(USE_NETWORKING)
     if(MSVC)
         vcpkg_install_packages(sdl2-net)
     endif()
+    if(ANDROID)
+        set(SDL2NET_INSTALL OFF)
+        set(SDL2NET_SAMPLES OFF)
+        # A static SDL_net looks for SDL2::SDL2-static, but SDL is shared on Android
+        add_library(SDL2::SDL2-static INTERFACE IMPORTED)
+        set_target_properties(SDL2::SDL2-static PROPERTIES INTERFACE_LINK_LIBRARIES SDL2::SDL2)
+        FetchContent_Declare(
+            SDL2_net
+            GIT_REPOSITORY https://github.com/libsdl-org/SDL_net.git
+            GIT_TAG release-2.2.0
+            OVERRIDE_FIND_PACKAGE
+        )
+        FetchContent_MakeAvailable(SDL2_net)
+        # The game includes <SDL2/SDL_net.h>, but SDL_net keeps its header at the source root
+        file(COPY ${sdl2_net_SOURCE_DIR}/SDL_net.h DESTINATION ${CMAKE_BINARY_DIR}/sdl2_net_include/SDL2)
+        target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_BINARY_DIR}/sdl2_net_include)
+    endif()
     find_package(SDL2_net REQUIRED)
     include_directories(${SDL2_NET_INCLUDE_DIRS})
     target_compile_definitions(${PROJECT_NAME} PRIVATE USE_NETWORKING)
@@ -479,6 +511,33 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "CafeOS")
     )
     target_include_directories(${PROJECT_NAME} PRIVATE
         ${DEVKITPRO}/portlibs/wiiu/include/
+    )
+elseif(ANDROID)
+    set(BUILD_TESTING OFF)
+    set(INSTALL_DOCS OFF)
+    FetchContent_Declare(
+        Ogg
+        GIT_REPOSITORY https://github.com/xiph/ogg.git
+        GIT_TAG v1.3.5
+        OVERRIDE_FIND_PACKAGE
+    )
+    FetchContent_MakeAvailable(Ogg)
+    FetchContent_Declare(
+        Vorbis
+        GIT_REPOSITORY https://github.com/xiph/vorbis.git
+        GIT_TAG v1.3.7
+        OVERRIDE_FIND_PACKAGE
+    )
+    FetchContent_MakeAvailable(Vorbis)
+    set(ADDITIONAL_LIBRARY_DEPENDENCIES
+        "$<$<BOOL:${USE_NETWORKING}>:SDL2_net>"
+        ogg
+        vorbis
+        vorbisenc
+        vorbisfile
+        android
+        log
+        dl
     )
 else()
     find_package(Ogg REQUIRED)
@@ -702,7 +761,7 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
       if(NOT DEFINED CPU_OPTION)
         if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")
           set(CPU_OPTION -msse2 -mfpmath=sse)
-        elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+        elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64" AND NOT ANDROID)
           set(CPU_OPTION -mcpu=native)
         endif()
       endif()
@@ -739,7 +798,8 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
   endif()
 endif()
 
-if(NOT CMAKE_SYSTEM_NAME STREQUAL "NintendoSwitch")
+# On Android the asset tools run on the build host, not the device: build bk.o2r and lighthouse.o2r with a desktop build
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "NintendoSwitch" AND NOT ANDROID)
 include(ExternalProject)
 ExternalProject_Add(TorchExternal
 	PREFIX TorchExternal

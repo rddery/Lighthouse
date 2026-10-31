@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Lighthouse</string>
+    <string name="select_rom">Select your Banjo-Kazooie ROM (.z64)</string>
+    <string name="copying_rom">Copying ROM…</string>
+    <string name="copy_failed">Could not copy the game files: %1$s</string>
+</resources>

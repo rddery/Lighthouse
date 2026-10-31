@@ -449,8 +449,8 @@ static void SetAppImageHome() {
 }
 #endif
 
-/* Rename SDL_main to main for SDL compatibility */
-#ifdef __GNUC__
+/* Rename SDL_main to main for SDL compatibility. Android's SDLActivity looks up SDL_main itself. */
+#if defined(__GNUC__) && !defined(__ANDROID__)
 #define SDL_main main
 #endif
 

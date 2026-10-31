@@ -1,0 +1,78 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Files the game reads at runtime. They are bundled into the APK and copied to the app's
+// external files directory on first launch (see LauncherActivity).
+def repoRoot = file('../..')
+def lighthouseO2r = file(project.findProperty('lighthouseO2r') ?: "${repoRoot}/lighthouse.o2r")
+def generatedAssets = layout.buildDirectory.dir('generated/lighthouse-assets')
+
+android {
+    namespace 'com.harbourmasters.lighthouse'
+    compileSdk 35
+    ndkVersion '27.2.12479018'
+
+    defaultConfig {
+        applicationId 'com.harbourmasters.lighthouse'
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '1.2.2'
+
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+        externalNativeBuild {
+            cmake {
+                arguments '-DANDROID_STL=c++_shared'
+                targets 'Lighthouse'
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            // Sideloadable out of the box; replace with a real signing config for distribution
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path file('../../CMakeLists.txt')
+            version '3.31.6'
+        }
+    }
+
+    sourceSets {
+        main {
+            assets.srcDirs += generatedAssets
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+def copyGameData = tasks.register('copyGameData', Copy) {
+    doFirst {
+        if (!lighthouseO2r.exists()) {
+            throw new GradleException("Missing ${lighthouseO2r}. Generate it on your computer first " +
+                    "(see docs/BUILDING.md, Android section) or pass -PlighthouseO2r=/path/to/lighthouse.o2r")
+        }
+    }
+    into generatedAssets.map { it.dir('data') }
+    from(lighthouseO2r)
+    from("${repoRoot}/config.yml")
+    from("${repoRoot}/assets") {
+        into 'assets'
+    }
+}
+
+tasks.named('preBuild') {
+    dependsOn copyGameData
+}
