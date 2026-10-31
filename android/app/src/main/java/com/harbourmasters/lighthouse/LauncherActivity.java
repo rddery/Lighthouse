@@ -2,6 +2,8 @@ package com.harbourmasters.lighthouse;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
@@ -32,6 +34,8 @@ public class LauncherActivity extends Activity {
     private static final int REQUEST_ROM = 1;
     private static final String BUNDLED_DATA = "data";
     private static final String STAMP_FILE = ".bundled-data-version";
+    private static final int SHARED_TEXT_CHARS = 20_000;
+    private static final int COPIED_TEXT_CHARS = 100_000;
 
     private File mDataDir;
 
@@ -42,6 +46,7 @@ public class LauncherActivity extends Activity {
 
         new Thread(() -> {
             String crashReport = CrashReport.takeUnreported(this, mDataDir);
+            Uri savedReport = crashReport != null ? CrashReport.saveToDownloads(this, crashReport) : null;
             try {
                 copyBundledDataIfNeeded();
             } catch (IOException e) {
@@ -50,7 +55,7 @@ public class LauncherActivity extends Activity {
             }
             runOnUiThread(() -> {
                 if (crashReport != null) {
-                    showCrashReport(crashReport);
+                    showCrashReport(crashReport, savedReport);
                 } else {
                     continueLaunch();
                 }
@@ -66,23 +71,57 @@ public class LauncherActivity extends Activity {
         }
     }
 
-    private void showCrashReport(String report) {
+    private void showCrashReport(String report, Uri savedReport) {
+        String message = savedReport != null
+                ? getString(R.string.crash_message_saved, CrashReport.displayName(this, savedReport))
+                : getString(R.string.crash_message_not_saved);
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle(R.string.crash_title)
-                .setMessage(R.string.crash_message)
+                .setMessage(message)
                 .setCancelable(false)
                 .setPositiveButton(R.string.crash_share, null)
+                .setNeutralButton(R.string.crash_copy, null)
                 .setNegativeButton(R.string.crash_continue, (d, which) -> continueLaunch())
                 .create();
-        // Keep the dialog open while sharing, so the game doesn't start (and maybe crash) behind the share sheet
-        dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-            Intent send = new Intent(Intent.ACTION_SEND);
-            send.setType("text/plain");
-            send.putExtra(Intent.EXTRA_SUBJECT, getString(R.string.crash_title));
-            send.putExtra(Intent.EXTRA_TEXT, report);
-            startActivity(Intent.createChooser(send, getString(R.string.crash_share)));
-        }));
+        // Keep the dialog open while sharing or copying, so the game doesn't start (and maybe crash) behind them
+        dialog.setOnShowListener(d -> {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> shareReport(report, savedReport));
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v -> copyReport(report));
+        });
         dialog.show();
+    }
+
+    private void shareReport(String report, Uri savedReport) {
+        Intent send = new Intent(Intent.ACTION_SEND);
+        send.setType("text/plain");
+        send.putExtra(Intent.EXTRA_SUBJECT, getString(R.string.crash_title));
+        // Intents are limited to about 1 MB in total, so the full report goes as a file and only its start as text
+        send.putExtra(Intent.EXTRA_TEXT, truncate(report, SHARED_TEXT_CHARS));
+        if (savedReport != null) {
+            send.putExtra(Intent.EXTRA_STREAM, savedReport);
+            send.setClipData(ClipData.newRawUri("", savedReport));
+            send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        }
+        try {
+            startActivity(Intent.createChooser(send, getString(R.string.crash_share)));
+        } catch (RuntimeException e) {
+            Toast.makeText(this, getString(R.string.crash_share_failed, e.getMessage()), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void copyReport(String report) {
+        try {
+            ClipboardManager clipboard = getSystemService(ClipboardManager.class);
+            clipboard.setPrimaryClip(ClipData.newPlainText(getString(R.string.crash_title),
+                    truncate(report, COPIED_TEXT_CHARS)));
+            Toast.makeText(this, R.string.crash_copied, Toast.LENGTH_SHORT).show();
+        } catch (RuntimeException e) {
+            Toast.makeText(this, getString(R.string.crash_share_failed, e.getMessage()), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private static String truncate(String text, int maxChars) {
+        return text.length() <= maxChars ? text : text.substring(0, maxChars) + "\n[truncated]\n";
     }
 
     private void copyBundledDataIfNeeded() throws IOException {

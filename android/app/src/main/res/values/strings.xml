@@ -5,7 +5,11 @@
     <string name="copying_rom">Copying ROM…</string>
     <string name="copy_failed">Could not copy the game files: %1$s</string>
     <string name="crash_title">Lighthouse closed unexpectedly</string>
-    <string name="crash_message">A crash report was saved to Android/data/com.harbourmasters.lighthouse/files/crash-report.txt. Share it to help fix the problem.</string>
+    <string name="crash_message_saved">A crash report was saved to your Download folder as %1$s. Share or copy it to help fix the problem.</string>
+    <string name="crash_message_not_saved">The crash report could not be saved. Share or copy it to help fix the problem.</string>
     <string name="crash_share">Share report</string>
+    <string name="crash_copy">Copy</string>
+    <string name="crash_copied">Crash report copied</string>
+    <string name="crash_share_failed">Could not share the report: %1$s</string>
     <string name="crash_continue">Continue</string>
 </resources>

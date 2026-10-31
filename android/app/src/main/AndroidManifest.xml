@@ -27,6 +27,7 @@
         <!-- Copies the game's data files and asks for the ROM, then starts the game -->
         <activity
             android:name=".LauncherActivity"
+            android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen"
             android:exported="true"
             android:screenOrientation="sensorLandscape">
             <intent-filter>
