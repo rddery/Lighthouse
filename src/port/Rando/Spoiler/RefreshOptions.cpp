@@ -7,7 +7,10 @@
 #include "port/UI/cvar_prefixes.h"
 
 std::vector<std::string> Rando::Spoiler::spoilerLogs;
-const std::filesystem::path randomizerFolderPath(Ship::Context::GetPathRelativeToAppDirectory("randomizer", "bk64"));
+// Not a global: the app directory isn't known yet while the library loads (on Android it comes from Java)
+static std::filesystem::path RandomizerFolderPath() {
+    return Ship::Context::GetPathRelativeToAppDirectory("randomizer", "bk64");
+}
 
 void Rando::Spoiler::RefreshSpoilerLogs() {
     Rando::Spoiler::spoilerLogs.clear();
@@ -15,6 +18,7 @@ void Rando::Spoiler::RefreshSpoilerLogs() {
     Rando::Spoiler::spoilerLogs.push_back("Generate New Seed");
     s32 spoilerFileIndex = -1;
 
+    const std::filesystem::path randomizerFolderPath = RandomizerFolderPath();
     if (!std::filesystem::exists(randomizerFolderPath)) {
         std::filesystem::create_directory(randomizerFolderPath);
     }

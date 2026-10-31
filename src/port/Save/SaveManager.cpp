@@ -32,12 +32,16 @@ extern u8 gCompletedBottlesBonusGames[7];
 using nlohmann::json;
 using nlohmann::ordered_json;
 namespace fs = std::filesystem;
-const std::string savesFolderPathString(Ship::Context::GetPathRelativeToAppDirectory("saves"));
-const std::filesystem::path savesFolderPath(savesFolderPathString);
+// Resolved on first use, not while the library loads: the app directory isn't known yet then (on Android it
+// comes from Java through SDL, and on Linux SHIP_HOME may only be set once SDL_main runs)
+static const std::string& SavesFolderPathString() {
+    static const std::string path = Ship::Context::GetPathRelativeToAppDirectory("saves");
+    return path;
+}
 
 std::string SaveManager_GetSavePath(const std::string& filename) {
     std::string romName = GetActiveRomhackBasename();
-    std::string dir = romName.empty() ? savesFolderPathString
+    std::string dir = romName.empty() ? SavesFolderPathString()
                                       : Ship::Context::GetPathRelativeToAppDirectory("saves/~romhacks/" + romName);
     std::error_code ec;
     fs::create_directories(dir, ec);
@@ -866,6 +870,7 @@ static void SaveGlobalData() {
 }
 
 void SaveManager_MoveInvalidSaveFile(const std::filesystem::path& fileName, const std::string& message) {
+    const std::filesystem::path savesFolderPath(SavesFolderPathString());
     const std::filesystem::path filePath = savesFolderPath / fileName;
     const std::filesystem::path backupFilePath =
         savesFolderPath / (fileName.stem().string() + "_invalid_" + std::to_string(std::time(nullptr)) + ".json");

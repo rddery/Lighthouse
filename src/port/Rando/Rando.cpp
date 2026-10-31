@@ -15,10 +15,14 @@
 namespace fs = std::filesystem;
 
 int16_t selectedFileNum = DEFAULT_FILE_NUM;
-const fs::path randomizerFolderPath(Ship::Context::GetPathRelativeToAppDirectory("randomizer", "bk64"));
+// Not a global: the app directory isn't known yet while the library loads (on Android it comes from Java)
+static fs::path RandomizerFolderPath() {
+    return Ship::Context::GetPathRelativeToAppDirectory("randomizer", "bk64");
+}
 
 // Entry point for the module, run once on game boot
 void Rando::Init() {
+    const fs::path randomizerFolderPath = RandomizerFolderPath();
     if (!fs::exists(randomizerFolderPath)) {
         fs::create_directory(randomizerFolderPath);
     }
