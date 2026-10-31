@@ -271,7 +271,8 @@ elseif (ANDROID)
     # Diagnostics branch only: on by default so the APK build picks it up
     option(LIGHTHOUSE_GL_DIAG "Dump texture uploads for diagnosis (see src/port/AndroidGLDiag.cpp)" ON)
     if (LIGHTHOUSE_GL_DIAG)
-        set_source_files_properties(src/port/AndroidGLDiag.cpp PROPERTIES COMPILE_DEFINITIONS LIGHTHOUSE_GL_DIAG)
+        set_source_files_properties(src/port/AndroidGLDiag.cpp src/port/Resource/Importers/ModelFactory.cpp
+                                    PROPERTIES COMPILE_DEFINITIONS LIGHTHOUSE_GL_DIAG)
     endif()
 else()
     add_executable(${PROJECT_NAME} ${ALL_FILES})

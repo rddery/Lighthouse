@@ -9,8 +9,12 @@
 #include <GLES3/gl3.h>
 #include <SDL2/SDL.h>
 #include <dlfcn.h>
+#include <fast/resource/type/Texture.h>
+#include <ship/resource/ResourceManager.h>
 
+#include <algorithm>
 #include <cstdio>
+#include <memory>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -152,6 +156,59 @@ extern "C" GL_APICALL void GL_APIENTRY glTexImage2D(GLenum target, GLint level, 
         snprintf(name, sizeof(name), "/tex%03d_%dx%d.png", n, width, height);
         stbi_write_png((sDir + name).c_str(), width, height, 4, pixels, width * 4);
         sDumped++;
+    }
+}
+
+// Compares a texture resource's bytes with the same bytes in the model's raw texture blob, which Torch
+// cut it from. Returns "ok", "swapped16" (equal after swapping each 16-bit word) or where they differ.
+std::string LighthouseDiag_CompareTexture(const std::shared_ptr<Ship::ResourceManager>& resourceMgr,
+                                          const std::string& path, const std::vector<uint8_t>& blob, uint32_t offset) {
+    auto tex = std::dynamic_pointer_cast<Fast::Texture>(resourceMgr->LoadResourceProcess(path));
+    if (tex == nullptr || tex->ImageData == nullptr) {
+        return "missing";
+    }
+    if (offset >= blob.size()) {
+        return "offset-past-blob(" + std::to_string(blob.size()) + ")";
+    }
+    const size_t n = std::min<size_t>(tex->ImageDataSize, blob.size() - offset);
+    const uint8_t* res = tex->ImageData;
+    const uint8_t* raw = blob.data() + offset;
+    if (memcmp(res, raw, n) == 0) {
+        return "ok(" + std::to_string(n) + "/" + std::to_string(tex->ImageDataSize) + ")";
+    }
+    bool swapped = n % 2 == 0;
+    for (size_t i = 0; swapped && i < n; i += 2) {
+        swapped = res[i] == raw[i + 1] && res[i + 1] == raw[i];
+    }
+    if (swapped) {
+        return "swapped16(" + std::to_string(n) + ")";
+    }
+    size_t diff = 0, first = n;
+    for (size_t i = 0; i < n; i++) {
+        if (res[i] != raw[i]) {
+            diff++;
+            first = std::min(first, i);
+        }
+    }
+    char buf[128];
+    snprintf(buf, sizeof(buf), "DIFF %zu/%zu bytes, first at %zu (res %02x%02x%02x%02x raw %02x%02x%02x%02x)", diff, n,
+             first, res[first], first + 1 < n ? res[first + 1] : 0, first + 2 < n ? res[first + 2] : 0,
+             first + 3 < n ? res[first + 3] : 0, raw[first], first + 1 < n ? raw[first + 1] : 0,
+             first + 2 < n ? raw[first + 2] : 0, first + 3 < n ? raw[first + 3] : 0);
+    return buf;
+}
+
+void LighthouseDiag_Write(const char* file, const std::string& line) {
+    std::lock_guard<std::mutex> lock(sMutex);
+    const char* base = SDL_AndroidGetExternalStoragePath();
+    if (base == nullptr) {
+        return;
+    }
+    const std::string dir = std::string(base) + "/diag";
+    mkdir(dir.c_str(), 0755);
+    if (FILE* f = fopen((dir + "/" + file).c_str(), "a")) {
+        fprintf(f, "%s\n", line.c_str());
+        fclose(f);
     }
 }
 

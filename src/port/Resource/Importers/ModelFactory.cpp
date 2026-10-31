@@ -4,6 +4,11 @@
 #include <ship/resource/type/Blob.h>
 #include <fast/resource/type/Vertex.h>
 #include <fast/resource/type/Texture.h>
+#ifdef LIGHTHOUSE_GL_DIAG
+std::string LighthouseDiag_CompareTexture(const std::shared_ptr<Ship::ResourceManager>& resourceMgr,
+                                          const std::string& path, const std::vector<uint8_t>& blob, uint32_t offset);
+void LighthouseDiag_Write(const char* file, const std::string& line);
+#endif
 
 #include "port/Resource/Alt/AltAnimTextures.h"
 #include "port/Resource/Alt/AltPathPool.h"
@@ -165,6 +170,26 @@ ResourceFactoryBinaryModelV0::ReadResource(std::shared_ptr<Ship::File> file,
         for (uint32_t i = 0; i < rawTexDataSize; i++)
             rawTexBlob[i] = reader->ReadInt8();
     }
+
+#ifdef LIGHTHOUSE_GL_DIAG
+    {
+        // Each _tex_N(_TLUT) resource is cut from the same blob by Torch, so they should match it
+        static int sChecked = 0;
+        for (uint16_t ti = 0; ti < texCount && sChecked < 400; ti++, sChecked++) {
+            const auto& tm = texMetas[ti];
+            const std::string base = initData->Path + "_tex_" + std::to_string(ti);
+            std::string line = fmt::format("{} type=0x{:X} {}x{} tlut={} off=0x{:X} blob={}:", base, tm.type, tm.width,
+                                           tm.height, tm.tlutColors, tm.textureDataOffset, rawTexBlob.size());
+            if (tm.tlutColors > 0) {
+                line += " TLUT " +
+                        LighthouseDiag_CompareTexture(resourceMgr, base + "_TLUT", rawTexBlob, tm.textureDataOffset);
+            }
+            line += " IMG " + LighthouseDiag_CompareTexture(resourceMgr, base, rawTexBlob,
+                                                            tm.textureDataOffset + tm.tlutColors * 2);
+            LighthouseDiag_Write("model-textures.txt", line);
+        }
+    }
+#endif
 
     // Animation
     float animScale = 0.0f;
