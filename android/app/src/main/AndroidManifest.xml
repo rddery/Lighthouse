@@ -21,6 +21,9 @@
         android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
         android:hardwareAccelerated="true">
 
+        <!-- Keep the game in landscape even though its window is resizable -->
+        <meta-data android:name="SDL_ENV.SDL_IOS_ORIENTATIONS" android:value="LandscapeLeft LandscapeRight" />
+
         <!-- Copies the game's data files and asks for the ROM, then starts the game -->
         <activity
             android:name=".LauncherActivity"
