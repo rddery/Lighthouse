@@ -1,7 +1,7 @@
 [submodule "libultraship"]
 	path = libultraship
-	url = https://github.com/JeodC/libultraship.git
-	branch = bk-lighthouse
+	url = https://github.com/rddery/libultraship.git
+	branch = android-fixes
 [submodule "Torch"]
 	path = Torch
 	url = https://github.com/HarbourMasters/Torch.git

@@ -268,6 +268,8 @@ elseif (ANDROID)
     set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME main)
     # The NDK makes -Wformat-security an error; desktop builds only warn
     target_compile_options(${PROJECT_NAME} PRIVATE -Wno-error=format-security)
+    # The game's text code relies on char being signed, as it is on every desktop target, but it's unsigned on ARM Android
+    target_compile_options(${PROJECT_NAME} PRIVATE -fsigned-char)
 else()
     add_executable(${PROJECT_NAME} ${ALL_FILES})
 endif()
