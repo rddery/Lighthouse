@@ -1,6 +1,7 @@
 package com.harbourmasters.lighthouse;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
@@ -25,6 +26,7 @@ import java.nio.file.Files;
  *  - copies lighthouse.o2r, config.yml and the extraction yamls bundled in the APK, once per install/update
  *  - if the game has not been extracted yet, asks for the ROM with the system file picker and copies it
  *    there, where the game's first-run extractor finds it
+ * If the game crashed last time, it first offers to share a crash report (see CrashReport).
  */
 public class LauncherActivity extends Activity {
     private static final int REQUEST_ROM = 1;
@@ -39,6 +41,7 @@ public class LauncherActivity extends Activity {
         mDataDir = getExternalFilesDir(null);
 
         new Thread(() -> {
+            String crashReport = CrashReport.takeUnreported(this, mDataDir);
             try {
                 copyBundledDataIfNeeded();
             } catch (IOException e) {
@@ -46,13 +49,40 @@ public class LauncherActivity extends Activity {
                 return;
             }
             runOnUiThread(() -> {
-                if (needsRom()) {
-                    pickRom();
+                if (crashReport != null) {
+                    showCrashReport(crashReport);
                 } else {
-                    startGame();
+                    continueLaunch();
                 }
             });
         }).start();
+    }
+
+    private void continueLaunch() {
+        if (needsRom()) {
+            pickRom();
+        } else {
+            startGame();
+        }
+    }
+
+    private void showCrashReport(String report) {
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(R.string.crash_title)
+                .setMessage(R.string.crash_message)
+                .setCancelable(false)
+                .setPositiveButton(R.string.crash_share, null)
+                .setNegativeButton(R.string.crash_continue, (d, which) -> continueLaunch())
+                .create();
+        // Keep the dialog open while sharing, so the game doesn't start (and maybe crash) behind the share sheet
+        dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            Intent send = new Intent(Intent.ACTION_SEND);
+            send.setType("text/plain");
+            send.putExtra(Intent.EXTRA_SUBJECT, getString(R.string.crash_title));
+            send.putExtra(Intent.EXTRA_TEXT, report);
+            startActivity(Intent.createChooser(send, getString(R.string.crash_share)));
+        }));
+        dialog.show();
     }
 
     private void copyBundledDataIfNeeded() throws IOException {

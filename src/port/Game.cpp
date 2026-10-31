@@ -462,6 +462,14 @@ int SDL_main(int argc, char* argv[]) {
 #ifdef __linux__
     SetAppImageHome();
 #endif
+#ifdef __ANDROID__
+    // The GLES renderer's shaders are "#version 300 es", but SDL asks for an OpenGL ES 2.0 context by default.
+    // Set the attributes after SDL's video init (which resets them) and before libultraship creates the window.
+    SDL_InitSubSystem(SDL_INIT_VIDEO);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+#endif
 
     // Anchor relative paths to the executable instead of cwd
     // when SHIP_HOME is not in use

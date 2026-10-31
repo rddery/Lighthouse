@@ -4,4 +4,8 @@
     <string name="select_rom">Select your Banjo-Kazooie ROM (.z64)</string>
     <string name="copying_rom">Copying ROM…</string>
     <string name="copy_failed">Could not copy the game files: %1$s</string>
+    <string name="crash_title">Lighthouse closed unexpectedly</string>
+    <string name="crash_message">A crash report was saved to Android/data/com.harbourmasters.lighthouse/files/crash-report.txt. Share it to help fix the problem.</string>
+    <string name="crash_share">Share report</string>
+    <string name="crash_continue">Continue</string>
 </resources>
