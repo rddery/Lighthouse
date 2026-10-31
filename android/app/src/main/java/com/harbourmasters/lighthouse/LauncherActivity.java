@@ -45,6 +45,11 @@ public class LauncherActivity extends Activity {
         mDataDir = getExternalFilesDir(null);
 
         new Thread(() -> {
+            String diagFolder = DiagExport.run(this, mDataDir);
+            if (diagFolder != null) {
+                runOnUiThread(() -> Toast.makeText(this, "Texture diagnostics saved to " + diagFolder,
+                        Toast.LENGTH_LONG).show());
+            }
             String crashReport = CrashReport.takeUnreported(this, mDataDir);
             Uri savedReport = crashReport != null ? CrashReport.saveToDownloads(this, crashReport) : null;
             try {

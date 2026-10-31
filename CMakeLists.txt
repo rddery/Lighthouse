@@ -268,6 +268,11 @@ elseif (ANDROID)
     set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME main)
     # The NDK makes -Wformat-security an error; desktop builds only warn
     target_compile_options(${PROJECT_NAME} PRIVATE -Wno-error=format-security)
+    # Diagnostics branch only: on by default so the APK build picks it up
+    option(LIGHTHOUSE_GL_DIAG "Dump texture uploads for diagnosis (see src/port/AndroidGLDiag.cpp)" ON)
+    if (LIGHTHOUSE_GL_DIAG)
+        set_source_files_properties(src/port/AndroidGLDiag.cpp PROPERTIES COMPILE_DEFINITIONS LIGHTHOUSE_GL_DIAG)
+    endif()
 else()
     add_executable(${PROJECT_NAME} ${ALL_FILES})
 endif()
