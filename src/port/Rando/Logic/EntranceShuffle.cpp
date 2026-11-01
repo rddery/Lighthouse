@@ -337,8 +337,13 @@ bool VerifyBeatable(const std::vector<RandoCheckId>& checkPool,
         int32_t cheapestCost = 0;
         for (const auto& puzzle : kPuzzles) {
             const int32_t cost = _puzzleCost(puzzle.costIndex);
+            // World doors spend their Jiggies, since the layout decides which order they open in. The Door of
+            // Grunty is checked like the rest of the logic checks it (enough Jiggies in total): its cost doesn't
+            // depend on the layout, and the logic can't reach every vanilla Jiggy (some witch switch Jiggies
+            // have no events yet), so the full 94 isn't reachable in it.
+            const int32_t available = puzzle.level == LEVEL_6_LAIR ? jiggies : jiggies - spentJiggies;
             if (sVerifierOpenWorlds.contains(puzzle.level) || !reachableEvents[puzzle.board].canAccess ||
-                jiggies - spentJiggies < cost) {
+                available < cost) {
                 continue;
             }
             if (cheapest == nullptr || cost < cheapestCost) {
@@ -348,7 +353,7 @@ bool VerifyBeatable(const std::vector<RandoCheckId>& checkPool,
         }
         if (cheapest != nullptr) {
             sVerifierOpenWorlds.insert(cheapest->level);
-            spentJiggies += cheapestCost;
+            spentJiggies += cheapest->level == LEVEL_6_LAIR ? 0 : cheapestCost;
             updateCounts();
             progress = true;
         }
