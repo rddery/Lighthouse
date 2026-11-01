@@ -528,8 +528,13 @@ bool GenerateGlitchlessLogicPool(std::vector<RandoCheckId>& checkPool,
 
                         SetPlacedItem(checkIndex, a, placedItems, placedCheckItems, abilityItemPool);
 
-                        progCheck++;
-                        accessibilityAdded = true;
+                        // No reachable molehill left: that's no progress, so the stall check can end the attempt
+                        // instead of looping here forever
+                        if (checkIndex >= 0) {
+                            progCheck++;
+                            accessibilityAdded = true;
+                        }
+                        break;
                     }
                 }
             }
