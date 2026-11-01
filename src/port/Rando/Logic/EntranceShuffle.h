@@ -44,6 +44,10 @@ bool VerifyBeatable(const std::vector<RandoCheckId>& checkPool,
                     const std::vector<RandoCheckId>& abilityCheckPool,
                     const std::vector<std::tuple<actor_e, int32_t, RandoCheckId>>& abilityItemPool);
 
+// A cheap check that rules out layouts no item placement can save: the same playthrough with every note, Jiggy,
+// Mumbo Token and Jinjo already collected, and every ability too if molehills are shuffled.
+bool CouldBeBeatable(bool abilitiesShuffled);
+
 // During VerifyBeatable, the logic's world and Jinjo checks use the simulation's own bookkeeping.
 bool IsVerifying();
 bool VerifierWorldOpen(level_e levelId);

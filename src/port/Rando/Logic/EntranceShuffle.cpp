@@ -240,29 +240,18 @@ void ComputeReachable() {
 
 } // namespace
 
-bool VerifyBeatable(const std::vector<RandoCheckId>& checkPool,
-                    const std::vector<std::tuple<actor_e, int32_t, RandoCheckId>>& itemPool,
-                    const std::vector<RandoCheckId>& abilityCheckPool,
-                    const std::vector<std::tuple<actor_e, int32_t, RandoCheckId>>& abilityItemPool) {
-    struct Item {
-        int32_t actorId;
-        int32_t collectionId;
-        RandoCheckId home; // the check this item comes from, which decides the world a Jinjo belongs to
-    };
+namespace {
 
-    // What each location holds: the placed item where items were shuffled, its own item elsewhere
-    std::map<RandoCheckId, Item> items;
-    for (const auto& [checkId, check] : Rando::StaticData::Checks) {
-        items[checkId] = { check.actorId, check.collectionId, checkId };
-    }
-    for (size_t i = 0; i < checkPool.size() && i < itemPool.size(); i++) {
-        items[checkPool[i]] = { std::get<0>(itemPool[i]), std::get<1>(itemPool[i]), std::get<2>(itemPool[i]) };
-    }
-    for (size_t i = 0; i < abilityCheckPool.size() && i < abilityItemPool.size(); i++) {
-        items[abilityCheckPool[i]] = { std::get<0>(abilityItemPool[i]), std::get<1>(abilityItemPool[i]),
-                                       std::get<2>(abilityItemPool[i]) };
-    }
+struct Item {
+    int32_t actorId;
+    int32_t collectionId;
+    RandoCheckId home; // the check this item comes from, which decides the world a Jinjo belongs to
+};
 
+// Collects every reachable item, completing the cheapest affordable puzzle whenever nothing else is left to collect,
+// and reports whether Gruntilda can be beaten. Optimistic: every note, Jiggy, Mumbo Token and Jinjo is already
+// collected (and every ability, with allAbilities), so only the layout and the abilities can stop it.
+bool Simulate(std::map<RandoCheckId, Item>& items, bool optimistic, bool allAbilities) {
     ResetSaveData();
     Rando::Logic::GrantStartingLoadout();
     sVerifying = true;
@@ -271,6 +260,19 @@ bool VerifyBeatable(const std::vector<RandoCheckId>& checkPool,
 
     std::set<RandoCheckId> collected;
     int32_t notes = 0, jiggies = 0, tokens = 0, spentJiggies = 0;
+    if (allAbilities) {
+        for (int32_t ability = ABILITY_0_BARGE; ability <= ABILITY_13_1ST_NOTEDOOR; ability++) {
+            SetUnlockedAbility((ability_e)ability);
+        }
+    }
+    if (optimistic) {
+        notes = 900;
+        jiggies = 100;
+        tokens = 116;
+        for (const auto& world : kWorlds) {
+            sVerifierJinjos[world.level] = 5;
+        }
+    }
 
     const auto updateCounts = [&]() {
         D_80385F30[ITEM_C_NOTE] = notes;
@@ -279,6 +281,7 @@ bool VerifyBeatable(const std::vector<RandoCheckId>& checkPool,
         D_80385F30[ITEM_1C_MUMBO_TOKEN] = tokens;
         D_80385F30[ITEM_25_MUMBO_TOKEN_TOTAL] = tokens;
     };
+    updateCounts();
 
     bool progress = true;
     while (progress) {
@@ -360,14 +363,47 @@ bool VerifyBeatable(const std::vector<RandoCheckId>& checkPool,
     }
 
     const bool beatable = reachableEvents[RA_GAME_COMPLETE].canAccess;
-    SPDLOG_INFO("[EntranceShuffle] Playthrough check: {} ({} checks, {} jiggies, {} notes, {} tokens)",
-                beatable ? "beatable" : "not beatable", collected.size(), jiggies, notes, tokens);
+    if (!optimistic) {
+        SPDLOG_INFO("[EntranceShuffle] Playthrough check: {} ({} checks, {} jiggies, {} notes, {} tokens)",
+                    beatable ? "beatable" : "not beatable", collected.size(), jiggies, notes, tokens);
+    }
 
     sVerifying = false;
     sVerifierOpenWorlds.clear();
     sVerifierJinjos.clear();
     ResetSaveData();
     return beatable;
+}
+
+std::map<RandoCheckId, Item> VanillaItems() {
+    std::map<RandoCheckId, Item> items;
+    for (const auto& [checkId, check] : Rando::StaticData::Checks) {
+        items[checkId] = { check.actorId, check.collectionId, checkId };
+    }
+    return items;
+}
+
+} // namespace
+
+bool CouldBeBeatable(bool abilitiesShuffled) {
+    std::map<RandoCheckId, Item> items = VanillaItems();
+    return Simulate(items, true, abilitiesShuffled);
+}
+
+bool VerifyBeatable(const std::vector<RandoCheckId>& checkPool,
+                    const std::vector<std::tuple<actor_e, int32_t, RandoCheckId>>& itemPool,
+                    const std::vector<RandoCheckId>& abilityCheckPool,
+                    const std::vector<std::tuple<actor_e, int32_t, RandoCheckId>>& abilityItemPool) {
+    // What each location holds: the placed item where items were shuffled, its own item elsewhere
+    std::map<RandoCheckId, Item> items = VanillaItems();
+    for (size_t i = 0; i < checkPool.size() && i < itemPool.size(); i++) {
+        items[checkPool[i]] = { std::get<0>(itemPool[i]), std::get<1>(itemPool[i]), std::get<2>(itemPool[i]) };
+    }
+    for (size_t i = 0; i < abilityCheckPool.size() && i < abilityItemPool.size(); i++) {
+        items[abilityCheckPool[i]] = { std::get<0>(abilityItemPool[i]), std::get<1>(abilityItemPool[i]),
+                                       std::get<2>(abilityItemPool[i]) };
+    }
+    return Simulate(items, false, false);
 }
 
 } // namespace EntranceShuffle
