@@ -161,6 +161,15 @@ void LighthouseMenu::AddMenuRando() {
         .CVar(Rando::StaticData::Options[RO_SHUFFLE_MUSIC_NOTES].cvar)
         .Options(CheckboxOptions().Tooltip("Shuffles Music Notes into the Pool."));
 
+    AddWidget(path, "Shuffle Entrances", WIDGET_SEPARATOR_TEXT);
+
+    AddWidget(path, "Shuffle World Entrances", WIDGET_CVAR_CHECKBOX)
+        .CVar(Rando::StaticData::Options[RO_SHUFFLE_WORLD_ENTRANCES].cvar)
+        .Options(CheckboxOptions().Tooltip(
+            "Each world door in Gruntilda's Lair leads to a random world, and leaving a world takes you back to "
+            "the door you came through. Doors keep their own puzzle requirements. The seed is checked to stay "
+            "beatable with the other shuffle options."));
+
     path.column = SECTION_COLUMN_2;
 
     AddWidget(path, "Win Conditions", WIDGET_SEPARATOR_TEXT);

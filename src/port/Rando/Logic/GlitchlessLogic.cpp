@@ -350,8 +350,10 @@ bool UpdateAccessibility(RandoRegionId randoRegionId, bool& accessChanged) {
     auto regionData = Rando::Logic::Regions[randoRegionId];
 
     for (auto& availableConnections : regionData.connections) {
-        if (!reachableRegions[availableConnections.first].canAccess && availableConnections.second.first()) {
-            reachableRegions[availableConnections.first].canAccess = true;
+        const RandoRegionId target =
+            Rando::EntranceShuffle::RemapConnection(randoRegionId, availableConnections.first);
+        if (!reachableRegions[target].canAccess && availableConnections.second.first()) {
+            reachableRegions[target].canAccess = true;
             accessChanged = true;
         }
     }
@@ -526,8 +528,13 @@ bool GenerateGlitchlessLogicPool(std::vector<RandoCheckId>& checkPool,
 
                         SetPlacedItem(checkIndex, a, placedItems, placedCheckItems, abilityItemPool);
 
-                        progCheck++;
-                        accessibilityAdded = true;
+                        // No reachable molehill left: that's no progress, so the stall check can end the attempt
+                        // instead of looping here forever
+                        if (checkIndex >= 0) {
+                            progCheck++;
+                            accessibilityAdded = true;
+                        }
+                        break;
                     }
                 }
             }

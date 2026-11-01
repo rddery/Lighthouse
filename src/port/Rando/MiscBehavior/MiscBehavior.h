@@ -10,6 +10,7 @@ namespace MiscBehavior {
 void Init();
 void InitWorldStateBehavior();
 void InitFileSelectBehavior();
+void InitEntranceBehavior();
 void OnFileLoad();
 void OnFileSave();
 

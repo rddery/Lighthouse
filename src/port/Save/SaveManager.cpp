@@ -471,6 +471,12 @@ ordered_json Convert_SaveDataToJSON(SaveData* saveData, int32_t fileNum) {
         }
         shipRando["randoSaveFlag"] = randoInfArray;
 
+        nlohmann::json worldEntrances = nlohmann::json::array();
+        for (int e = 0; e < RANDO_WORLD_ENTRANCE_COUNT; e++) {
+            worldEntrances.push_back(saveData->shipSaveData.randoSaveData.randoSaveEntrances[e]);
+        }
+        shipRando["worldEntrances"] = worldEntrances;
+
         ship["rando"] = shipRando;
     }
 
@@ -758,9 +764,11 @@ SaveData* Convert_JSONToSaveData(int32_t fileNum) {
         }
 
         for (int o = RO_LOGIC; o < RO_MAX; o++) {
+            const auto& staticOption = Rando::StaticData::Options[(RandoOptionId)o];
+            // Saves made before an option existed don't have it
             RandoSaveOption randoSaveOption = {
-                .name = Rando::StaticData::Options[(RandoOptionId)o].name,
-                .optionValue = rando["randoSaveOption"][Rando::StaticData::Options[(RandoOptionId)o].name],
+                .name = staticOption.name,
+                .optionValue = rando["randoSaveOption"].value(staticOption.name, staticOption.defaultValue),
             };
 
             saveData->shipSaveData.randoSaveData.randoSaveOption[o] = randoSaveOption;
@@ -768,6 +776,12 @@ SaveData* Convert_JSONToSaveData(int32_t fileNum) {
 
         for (int f = RANDO_INF_UNKNOWN; f < RANDO_INF_MAX; f++) {
             saveData->shipSaveData.randoSaveData.randoSaveFlag[f].flagState = rando["randoSaveFlag"][f];
+        }
+
+        for (int e = 0; e < RANDO_WORLD_ENTRANCE_COUNT; e++) {
+            const bool saved = rando.contains("worldEntrances") && rando["worldEntrances"].size() > (size_t)e;
+            saveData->shipSaveData.randoSaveData.randoSaveEntrances[e] =
+                saved ? rando["worldEntrances"][e].get<int8_t>() : (int8_t)e;
         }
     }
 

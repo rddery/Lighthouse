@@ -7,6 +7,7 @@
 void Rando::MiscBehavior::Init() {
     Rando::MiscBehavior::InitWorldStateBehavior();
     Rando::MiscBehavior::InitFileSelectBehavior();
+    Rando::MiscBehavior::InitEntranceBehavior();
     Rando::MiscBehavior::OnFileLoad();
     // Rando::MiscBehavior::OnFileSave();
 }
