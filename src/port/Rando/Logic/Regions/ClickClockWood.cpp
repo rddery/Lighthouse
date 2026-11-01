@@ -318,6 +318,10 @@ static RegisterShipInitFunc initFunc([]() {
         .connections = {
             CONNECTION(RR_CLICK_CLOCK_WOOD_WINTER_UPPER_TREE, true),
         },
+        .events = {
+            // On the tree's branch with a Sir Slush, reached from Winter's Flight Pad
+            EVENT(RA_WITCH_SWITCH_CLICK_CLOCK_WOOD, CAN_USE_ABILITY(ABILITY_9_FLIGHT) && CAN_USE_ABILITY(ABILITY_2_BEAK_BUSTER)),
+        },
     };
 
     Regions[RR_CLICK_CLOCK_WOOD_WINTER_INTERIOR_MUMBOS_SKULL] = RandoRegion{ .regionName = "Winter - Inside Mumbo's Skull", .mapId = MAP_4D_CCW_WINTER_MUMBOS_SKULL,
