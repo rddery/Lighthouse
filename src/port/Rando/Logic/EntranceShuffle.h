@@ -34,8 +34,10 @@ void Shuffle(std::mt19937& rng);
 // Logic: the region a connection actually leads to under the current layout.
 RandoRegionId RemapConnection(RandoRegionId from, RandoRegionId to);
 
-// Runtime: rewrites a map change into a world, or out of one back to the Lair, to follow the layout.
-void RemapMapChange(int32_t* map, int32_t* exit);
+// Runtime: rewrites a map change to follow the layout. enteringDoor is the door whose warp started the change (by
+// layout index), or -1: only a door's own warp is redirected into a world, since a witch switch cutscene can return
+// to a world through its entrance too.
+void RemapMapChange(int32_t* map, int32_t* exit, int32_t enteringDoor);
 
 // Simulates a playthrough with the given placements (vanilla items where nothing was placed): collects every
 // reachable item, spends Jiggies on the puzzles it can reach, and reports whether Gruntilda can be beaten.

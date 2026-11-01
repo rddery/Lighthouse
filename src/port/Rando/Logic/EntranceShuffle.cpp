@@ -163,17 +163,19 @@ RandoRegionId RemapConnection(RandoRegionId from, RandoRegionId to) {
     return to;
 }
 
-void RemapMapChange(int32_t* map, int32_t* exit) {
+void RemapMapChange(int32_t* map, int32_t* exit, int32_t enteringDoor) {
     const level_e currentLevel = map_getLevel((enum map_e)gsworld_getMap());
 
+    // Entering through a Lair door
+    if (enteringDoor >= 0 && enteringDoor < RANDO_WORLD_ENTRANCE_COUNT && *map == kWorlds[enteringDoor].enterMap &&
+        *exit == kWorlds[enteringDoor].enterExit) {
+        const World& world = kWorlds[sDoorToWorld[enteringDoor]];
+        *map = world.enterMap;
+        *exit = world.enterExit;
+        return;
+    }
+
     for (int32_t i = 0; i < RANDO_WORLD_ENTRANCE_COUNT; i++) {
-        // Entering world i's door from the Lair
-        if (currentLevel == LEVEL_6_LAIR && *map == kWorlds[i].enterMap && *exit == kWorlds[i].enterExit) {
-            const World& world = kWorlds[sDoorToWorld[i]];
-            *map = world.enterMap;
-            *exit = world.enterExit;
-            return;
-        }
         // Leaving world i, by its exit or the pause menu
         if (currentLevel == kWorlds[i].level && *map == kWorlds[i].lairMap && *exit == kWorlds[i].lairExit) {
             const World& door = kWorlds[sWorldToDoor[i]];
