@@ -244,6 +244,13 @@ inline bool CanOpenWorld(level_e levelId) {
         levelNum = levelId - 1;
     }
 
+    // The pictures and open flags go GV, MMM, RBB, CCW, but the level ids go GV, CCW, RBB, MMM
+    if (levelId == LEVEL_8_CLICK_CLOCK_WOOD) {
+        levelNum = 9;
+    } else if (levelId == LEVEL_A_MAD_MONSTER_MANSION) {
+        levelNum = 7;
+    }
+
     if (fileProgressFlag_get(worldOpenFlags[levelNum - 1])) {
         return true;
     }
