@@ -143,6 +143,9 @@ void Rando::Logic::InitializeSaveData(SaveData* saveData) {
     for (int i = RANDO_INF_UNKNOWN; i < RANDO_INF_MAX; i++) {
         saveData->shipSaveData.randoSaveData.randoSaveFlag[i].flagState = 0;
     }
+
+    Rando::EntranceShuffle::ResetLayout();
+    Rando::EntranceShuffle::GetLayout(saveData->shipSaveData.randoSaveData.randoSaveEntrances);
 }
 
 void Rando::Logic::GenerateSaveData(SaveData* saveData) {

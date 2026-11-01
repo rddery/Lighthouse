@@ -1475,8 +1475,12 @@ typedef enum {
     RO_SHUFFLE_MUMBO_TOKENS,
     RO_SHUFFLE_MUSIC_NOTES,
     RO_SHUFFLE_STOP_N_SWOP,
+    RO_SHUFFLE_WORLD_ENTRANCES,
     RO_MAX,
 } RandoOptionId;
+
+// The nine world doors in Gruntilda's Lair (see Logic/EntranceShuffle.h)
+#define RANDO_WORLD_ENTRANCE_COUNT 9
 
 typedef enum {
     RO_GENERIC_OFF,

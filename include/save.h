@@ -14,6 +14,8 @@ typedef struct {
     RandoSaveFlag randoSaveFlag[RANDO_INF_MAX];
     RandoSaveCheck randoSaveCheck[RC_MAX];
     RandoSaveOption randoSaveOption[RO_MAX];
+    // World behind each Lair door, by door (identity when entrances aren't shuffled)
+    int8_t randoSaveEntrances[RANDO_WORLD_ENTRANCE_COUNT];
 } RandoSaveData;
 
 // Note collection retention: per-map bitfield of collected music notes, keyed by

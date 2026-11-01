@@ -98,35 +98,66 @@ bool GenerateShufflePool(SaveData* saveData) {
         Rando::Logic::ShuffleRandoItems(CVarGetString(CVAR_RANDOMIZER_SETTING("InputSeed"), ""), abilityItemPool);
     }
 
+    if (itemPool.empty() && abilityItemPool.empty()) {
+        // Nothing to shuffle set the seed, but the entrances may still need one
+        randoFinalSeed = GetRandoSeed(CVarGetString(CVAR_RANDOMIZER_SETTING("InputSeed"), ""));
+    }
+
+    const bool shuffleEntrances =
+        CVarGetInteger(Rando::StaticData::Options[RO_SHUFFLE_WORLD_ENTRANCES].cvar, 0) == RO_GENERIC_ON;
+    // Its own stream, so the entrance layout doesn't change the item placement draws
+    std::mt19937 entranceRng((uint32_t)randoFinalSeed ^ 0x454E5452u);
+    Rando::EntranceShuffle::ResetLayout();
+
     if (RANDO_SAVE_OPTIONS[RO_LOGIC].optionValue == RO_LOGIC_GLITCHLESS) {
-        // Placement can stall on a bad draw, so retry on the same RNG stream before giving up
-        const int maxAttempts = 10;
+        // Placement can stall on a bad draw, so retry on the same RNG stream before giving up. With shuffled
+        // entrances a layout can also leave the game unbeatable, which only a playthrough check catches (the
+        // placement assumes vanilla progression for unshuffled items), so try further layouts too.
+        const int maxLayouts = shuffleEntrances ? 40 : 1;
+        const int maxAttempts = shuffleEntrances ? 3 : 10;
         bool generated = false;
         Rando::Logic::SeedGlitchlessPlacement(randoFinalSeed);
-        for (int attempt = 1; attempt <= maxAttempts && !generated; attempt++) {
-            std::vector<RandoCheckId> attemptCheckPool = checkPool;
-            std::vector<std::tuple<actor_e, int32_t, RandoCheckId>> attemptItemPool = itemPool;
-            std::vector<RandoCheckId> attemptAbilityCheckPool = abilityCheckPool;
-            std::vector<std::tuple<actor_e, int32_t, RandoCheckId>> attemptAbilityItemPool = abilityItemPool;
+        for (int layout = 1; layout <= maxLayouts && !generated; layout++) {
+            if (shuffleEntrances) {
+                Rando::EntranceShuffle::Shuffle(entranceRng);
+            }
+            for (int attempt = 1; attempt <= maxAttempts && !generated; attempt++) {
+                std::vector<RandoCheckId> attemptCheckPool = checkPool;
+                std::vector<std::tuple<actor_e, int32_t, RandoCheckId>> attemptItemPool = itemPool;
+                std::vector<RandoCheckId> attemptAbilityCheckPool = abilityCheckPool;
+                std::vector<std::tuple<actor_e, int32_t, RandoCheckId>> attemptAbilityItemPool = abilityItemPool;
 
-            generated = Rando::Logic::GenerateGlitchlessLogicPool(
-                attemptCheckPool, attemptItemPool, attemptAbilityCheckPool, attemptAbilityItemPool, saveData);
-            if (generated) {
-                checkPool = attemptCheckPool;
-                itemPool = attemptItemPool;
-                abilityCheckPool = attemptAbilityCheckPool;
-                abilityItemPool = attemptAbilityItemPool;
-            } else {
-                SPDLOG_WARN("Glitchless generation attempt {} of {} failed", attempt, maxAttempts);
+                generated = Rando::Logic::GenerateGlitchlessLogicPool(
+                    attemptCheckPool, attemptItemPool, attemptAbilityCheckPool, attemptAbilityItemPool, saveData);
+                if (generated && shuffleEntrances &&
+                    !Rando::EntranceShuffle::VerifyBeatable(attemptCheckPool, attemptItemPool,
+                                                            attemptAbilityCheckPool, attemptAbilityItemPool)) {
+                    generated = false;
+                }
+                if (generated) {
+                    checkPool = attemptCheckPool;
+                    itemPool = attemptItemPool;
+                    abilityCheckPool = attemptAbilityCheckPool;
+                    abilityItemPool = attemptAbilityItemPool;
+                } else {
+                    SPDLOG_WARN("Glitchless generation attempt {} of {} failed (entrance layout {} of {})", attempt,
+                                maxAttempts, layout, maxLayouts);
+                }
             }
         }
 
         if (!generated) {
+            Rando::EntranceShuffle::ResetLayout();
             return false;
         }
     } else if (RANDO_SAVE_OPTIONS[RO_LOGIC].optionValue == RO_LOGIC_NO_LOGIC) {
+        if (shuffleEntrances) {
+            Rando::EntranceShuffle::Shuffle(entranceRng);
+        }
         Rando::Logic::GenerateNoLogicPool(itemPool, abilityItemPool);
     }
+
+    Rando::EntranceShuffle::GetLayout(saveData->shipSaveData.randoSaveData.randoSaveEntrances);
 
     if (checkPool.size() != itemPool.size()) {
         return false;
@@ -177,6 +208,8 @@ bool GenerateShufflePool(SaveData* saveData) {
 }
 
 void GeneratePoolFromSaveData(SaveData* saveData) {
+    Rando::EntranceShuffle::SetLayout(saveData->shipSaveData.randoSaveData.randoSaveEntrances);
+
     for (int i = RC_UNKNOWN; i < RC_MAX; i++) {
         RandoSaveCheck randoSaveCheck = saveData->shipSaveData.randoSaveData.randoSaveCheck[i];
 

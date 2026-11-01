@@ -20,6 +20,13 @@ nlohmann::ordered_json GenerateFromPoolGeneration() {
         orderedSpoiler["options"][optionEntry.name] = optionEntry.optionValue;
     }
 
+    // Which world each Lair door leads to, by door
+    orderedSpoiler["worldEntrances"] = nlohmann::ordered_json::object();
+    for (int32_t door = 0; door < RANDO_WORLD_ENTRANCE_COUNT; door++) {
+        orderedSpoiler["worldEntrances"][Rando::EntranceShuffle::GetWorldName(door)] =
+            Rando::EntranceShuffle::GetWorldName(Rando::EntranceShuffle::GetWorldBehindDoor(door));
+    }
+
     orderedSpoiler["checks"] = nlohmann::json::object();
 
     for (auto& checkEntry : RANDO_SAVE_CHECKS) {
@@ -83,6 +90,26 @@ bool GenerateFromSpoiler(nlohmann::json spoiler) {
             }
         }
     }
+
+    // Older logs have no entrances: every door leads to its own world
+    int8_t layout[RANDO_WORLD_ENTRANCE_COUNT];
+    for (int32_t door = 0; door < RANDO_WORLD_ENTRANCE_COUNT; door++) {
+        layout[door] = (int8_t)door;
+        if (!spoiler.contains("worldEntrances")) {
+            continue;
+        }
+        const auto entry = spoiler["worldEntrances"].find(Rando::EntranceShuffle::GetWorldName(door));
+        if (entry == spoiler["worldEntrances"].end() || !entry->is_string()) {
+            continue;
+        }
+        for (int32_t world = 0; world < RANDO_WORLD_ENTRANCE_COUNT; world++) {
+            if (entry->get<std::string>() == Rando::EntranceShuffle::GetWorldName(world)) {
+                layout[door] = (int8_t)world;
+            }
+        }
+    }
+    Rando::EntranceShuffle::SetLayout(layout);
+    Rando::EntranceShuffle::GetLayout(RANDO_SAVE_ENTRANCES);
 
     if (spoiler.contains("loadout") && !spoiler["loadout"].empty()) {
         if (spoiler["loadout"].contains("abilities") && !spoiler["loadout"]["abilities"].empty()) {

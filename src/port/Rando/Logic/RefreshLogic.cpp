@@ -43,7 +43,8 @@ void RefreshReachableRegions() {
                 }
             }
 
-            for (const auto& [targetId, connectionInfo] : regionData.connections) {
+            for (const auto& [connectionTargetId, connectionInfo] : regionData.connections) {
+                const RandoRegionId targetId = Rando::EntranceShuffle::RemapConnection(regionId, connectionTargetId);
                 if (seen.find(targetId) == seen.end() && connectionInfo.first()) {
                     seen.insert(targetId);
                     changed = true;

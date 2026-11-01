@@ -2,6 +2,7 @@
 #define RANDO_LOGIC_H
 
 #include "port/Rando/Rando.h"
+#include "port/Rando/Logic/EntranceShuffle.h"
 #include "port/ShipUtils.h"
 
 #include <unordered_set>
@@ -198,6 +199,10 @@ inline bool CanAccessCheck(RandoCheckId randoCheckId) {
 }
 
 inline bool CanCollectWorldJinjos(level_e levelId) {
+    if (Rando::EntranceShuffle::IsVerifying()) {
+        return Rando::EntranceShuffle::VerifierHasAllJinjos(levelId);
+    }
+
     int32_t accessibleJinjos = 0;
 
     for (auto& entry : Rando::Logic::shuffledPool) {
@@ -229,6 +234,10 @@ inline bool CanUseTransformation(transformation_e transId) {
 }
 
 inline bool CanOpenWorld(level_e levelId) {
+    if (Rando::EntranceShuffle::IsVerifying()) {
+        return Rando::EntranceShuffle::VerifierWorldOpen(levelId);
+    }
+
     int32_t levelNum = levelId;
 
     if (levelNum > LEVEL_6_LAIR) {

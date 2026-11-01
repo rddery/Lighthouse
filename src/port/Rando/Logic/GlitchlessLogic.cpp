@@ -350,8 +350,10 @@ bool UpdateAccessibility(RandoRegionId randoRegionId, bool& accessChanged) {
     auto regionData = Rando::Logic::Regions[randoRegionId];
 
     for (auto& availableConnections : regionData.connections) {
-        if (!reachableRegions[availableConnections.first].canAccess && availableConnections.second.first()) {
-            reachableRegions[availableConnections.first].canAccess = true;
+        const RandoRegionId target =
+            Rando::EntranceShuffle::RemapConnection(randoRegionId, availableConnections.first);
+        if (!reachableRegions[target].canAccess && availableConnections.second.first()) {
+            reachableRegions[target].canAccess = true;
             accessChanged = true;
         }
     }
