@@ -436,7 +436,7 @@ enum : uint32_t {
     ANIM_WAIT = 0x3240,      // link_normal_wait_free
     ANIM_WALK = 0x3290,      // link_normal_walk_free
     ANIM_RUN = 0x3140,       // link_normal_run_free
-    ANIM_JUMP = 0x2FE0,      // link_normal_jump
+    ANIM_JUMP = 0x3148,      // link_normal_run_jump
     ANIM_FALL = 0x2F10,      // link_normal_fall
     ANIM_FALL_UP = 0x2F20,   // link_normal_fall_up_free
     ANIM_LANDING = 0x3028,   // link_normal_landing_free
@@ -491,10 +491,11 @@ AnimChoice ChooseAnim(s32 state) {
             return { ANIM_LANDING, false, 1.0f };
         case BS_31_ROLL:
             return { ANIM_ROLL, false, 1.5f };
+        // OoT's slashes are only a few frames long: slowed down, they last as long as Banjo's attacks
         case BS_6_CLAW:
-            return { ANIM_SLASH, false, 1.5f };
+            return { ANIM_SLASH, false, 0.4f };
         case BS_13_BBARGE:
-            return { ANIM_THRUST, false, 1.0f };
+            return { ANIM_THRUST, false, 0.4f };
         case BS_7_CROUCH:
         case BS_21_BSHOCK_CHARGE:
             return { ANIM_CROUCH, true, 1.0f };
