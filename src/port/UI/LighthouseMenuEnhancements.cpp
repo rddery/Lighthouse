@@ -2,6 +2,7 @@
 #include "port/Enhancements/Trackers/DisplayOverlay.h"
 #include "port/Network/Anchor/Anchor.h"
 #include "port/FrameHost.h"
+#include "port/Enhancements/Cosmetics/PlayAsLink.h"
 
 #include "functions.h"
 extern "C" {
@@ -771,6 +772,33 @@ void LighthouseMenu::AddMenuEnhancements() {
         .WindowName("Cosmetics Editor")
         .HideInSearch(true)
         .Options(WindowButtonOptions().Tooltip("Enables the separate Cosmetics Editor Window."));
+
+    AddWidget(path, "Play as Link", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Play as Link", WIDGET_CVAR_CHECKBOX)
+        .CVar(CVAR_PLAY_AS_LINK)
+        .RaceDisable(false)
+        .Options(CheckboxOptions().Tooltip(
+            "Draws adult Link from Ocarina of Time in place of Banjo and Kazooie. Needs your own Ocarina of Time "
+            "(USA 1.0) ROM: pick it once with the button below. Transformations keep their own models."));
+    AddWidget(path, "Load Ocarina of Time ROM...", WIDGET_BUTTON)
+        .Callback([](WidgetInfo&) { PlayAsLink::PickRom(); })
+        .RaceDisable(false)
+        .Options(
+            ButtonOptions()
+                .Size(Sizes::Inline)
+                .Tooltip(
+                    "Reads Link's model and animations from an Ocarina of Time (USA 1.0) ROM. Only those are kept, in "
+                    "oot_link.bin next to your saves."));
+    AddWidget(path, "Play as Link Status", WIDGET_CUSTOM).HideInSearch(true).CustomFunction([](WidgetInfo&) {
+        const std::string& status = PlayAsLink::GetStatus();
+        if (!status.empty()) {
+            ImGui::TextWrapped("%s", status.c_str());
+        } else if (PlayAsLink::IsAvailable()) {
+            ImGui::TextWrapped("Link is ready.");
+        } else {
+            ImGui::TextWrapped("Load an Ocarina of Time (USA 1.0) ROM to use this.");
+        }
+    });
 
     path.sidebarName = "Gameplay Timer";
     AddSidebarEntry("Enhancements", path.sidebarName, 2);

@@ -6,6 +6,9 @@
 #include "core2/ba/model.h"
 #include "core2/ba/physics.h"
 #include "bk_math.h"
+#include "port/Enhancements/Cosmetics/PlayAsLink.h"
+
+extern MtxF D_80383BF8; // [port] the model matrix of modelRender's last draw
 
 void assetcache_release(void *); //assetcache_free
 void modelRender_func_8033A280(f32);
@@ -103,7 +106,20 @@ void baModel_draw(Gfx **gfx, Mtx **mtx, Vtx **vtx){
         modelRender_setDepthMode(MODEL_RENDER_DEPTH_FULL);
         // [port] Swap in this player's recoloured palettes/vertex colours for this draw.
         CALL_EVENT(OnModelDraw, baModel_getModelId(), baModelBin);
-        if(D_8037C150.unk0){
+        // [port] Play as Link: Banjo is drawn into a scratch list, which keeps his draw's side effects (Kazooie's
+        // reference points, the marker's visibility), then Link is drawn with his model matrix.
+        if(PlayAsLink_shouldDraw(baModel_getModelId())){
+            Gfx *scratch = PlayAsLink_getScratchGfx();
+            f32 *draw_pos = plyr_pos;
+            if(D_8037C150.unk0){
+                D_8037C150.unk0 = 0;
+                draw_pos = D_8037C150.unk4;
+            }
+            if(modelRender_draw(&scratch, mtx, draw_pos, rotation, baModelScale, sp38, baModelBin)){
+                PlayAsLink_draw(gfx, mtx, &D_80383BF8);
+            }
+        }
+        else if(D_8037C150.unk0){
             D_8037C150.unk0 = 0;
             modelRender_draw(gfx, mtx, D_8037C150.unk4, rotation, baModelScale, sp38, baModelBin);
         }
