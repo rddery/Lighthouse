@@ -21,6 +21,8 @@ namespace PlayAsLink {
 std::string ImportRom(const std::string& romPath);
 // Whether Link's data was imported (and could be read).
 bool IsAvailable();
+// Whether Epona is there too (data imported by an older version doesn't have her).
+bool HasEpona();
 // Opens a file picker for the ROM, then imports it.
 void PickRom();
 // The result of the last import, for the menu.

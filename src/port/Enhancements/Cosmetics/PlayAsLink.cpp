@@ -1,4 +1,5 @@
 #include "PlayAsLink.h"
+#include "PlayAsLinkHorse.h"
 
 #include <algorithm>
 #include <atomic>
@@ -61,7 +62,9 @@ constexpr int kFrameSize = kJointCount * 6 + 2; // and the face (eyes and mouth)
 constexpr const char* kCacheName = "oot_link.bin";
 // On Android the system file picker copies the chosen ROM here (see LighthouseActivity.pickOotRom)
 constexpr const char* kAndroidImportName = "oot_link_import.rom";
-constexpr char kCacheMagic[8] = { 'O', 'O', 'T', 'L', 'I', 'N', 'K', '1' };
+// Version 2 adds object_horse (Epona); a version 1 cache still gives Link, without her
+constexpr char kCacheMagicV1[8] = { 'O', 'O', 'T', 'L', 'I', 'N', 'K', '1' };
+constexpr char kCacheMagic[8] = { 'O', 'O', 'T', 'L', 'I', 'N', 'K', '2' };
 
 // Link stands about 6000 units tall in his model space; Banjo about 150 in his.
 constexpr float kLinkScale = 0.026f;
@@ -185,6 +188,8 @@ public:
     std::vector<Limb> limbs;
     int matrixCount = 0;
     std::vector<Gfx*> limbLists; // converted display list of each limb, or nullptr
+    std::vector<uint8_t> horse;  // object_horse, when the cache has it
+    std::unique_ptr<PlayAsLinkHorse::Epona> epona;
     // Hand and back lists for the poses that show his equipment
     Gfx* handSword = nullptr;
     Gfx* handShield = nullptr;
@@ -396,6 +401,11 @@ bool LinkModel::Build(std::string& error) {
         error = "Link's equipment couldn't be converted";
         return false;
     }
+    // Epona is optional: without her, Link runs through the Talon Trot on foot
+    if (!horse.empty()) {
+        std::string horseError;
+        epona = PlayAsLinkHorse::Build(horse, horseError);
+    }
     return true;
 }
 
@@ -404,6 +414,7 @@ bool LinkModel::Build(std::string& error) {
 std::unique_ptr<LinkModel> sModel;
 std::vector<std::unique_ptr<LinkModel>> sRetiredModels;
 std::atomic<bool> sAvailable = false;
+std::atomic<bool> sHasEpona = false;
 std::string sStatus; // the menu's (render thread)
 
 std::string CachePath() {
@@ -416,11 +427,19 @@ std::unique_ptr<LinkModel> LoadCache() {
         return nullptr;
     }
     char magic[8];
-    if (!file.read(magic, 8) || std::memcmp(magic, kCacheMagic, 8) != 0) {
+    if (!file.read(magic, 8)) {
+        return nullptr;
+    }
+    const bool withHorse = std::memcmp(magic, kCacheMagic, 8) == 0;
+    if (!withHorse && std::memcmp(magic, kCacheMagicV1, 8) != 0) {
         return nullptr;
     }
     auto model = std::make_unique<LinkModel>();
-    for (std::vector<uint8_t>* part : { &model->keep, &model->obj, &model->anim }) {
+    std::vector<std::vector<uint8_t>*> parts = { &model->keep, &model->obj, &model->anim };
+    if (withHorse) {
+        parts.push_back(&model->horse);
+    }
+    for (std::vector<uint8_t>* part : parts) {
         uint8_t sizeBytes[4];
         if (!file.read((char*)sizeBytes, 4)) {
             return nullptr;
@@ -464,32 +483,84 @@ struct AnimChoice {
 
 // gameplay_keep offsets of the animations used
 enum : uint32_t {
-    ANIM_WAIT = 0x3240,       // link_normal_wait_free
-    ANIM_WALK = 0x3290,       // link_normal_walk_free
-    ANIM_RUN = 0x3140,        // link_normal_run_free
-    ANIM_JUMP = 0x3148,       // link_normal_run_jump
-    ANIM_FALL = 0x2F10,       // link_normal_fall
-    ANIM_FALL_UP = 0x2F20,    // link_normal_fall_up_free
-    ANIM_LANDING = 0x3028,    // link_normal_landing_free
-    ANIM_ROLL = 0x3038,       // link_normal_landing_roll_free
-    ANIM_SLASH = 0x2A80,      // link_fighter_normal_kiru
-    ANIM_THRUST = 0x2AA8,     // link_fighter_pierce_kiru
-    ANIM_CROUCH = 0x2ED8,     // link_normal_defense_wait_free
-    ANIM_JUMP_SLASH = 0x2A48, // link_fighter_jump_kiru
-    ANIM_GUARD = 0x2ED0,      // link_normal_defense_wait: shield raised in front
-    ANIM_THROW = 0x31C8,      // link_normal_throw_free
-    ANIM_FLY = 0x2C98,        // link_hook_fly_wait
-    ANIM_SWIM = 0x32F0,       // link_swimer_swim
-    ANIM_SWIM_WAIT = 0x3328,  // link_swimer_swim_wait
-    ANIM_SWIM_DEAD = 0x32F8,  // link_swimer_swim_dead
-    ANIM_CLIMB = 0x2E90,      // link_normal_climb_up
-    ANIM_HIT = 0x2F70,        // link_normal_front_hit
-    ANIM_DOWN = 0x2F58,       // link_normal_front_downA
-    ANIM_GET_ITEM = 0x2788,   // link_demo_get_itemB
-    ANIM_SLIP = 0x2EE0,       // link_normal_down_slope_slip
-    ANIM_BRAKE = 0x2DA0,      // link_normal_back_brake
-    ANIM_TALK = 0x31A8,       // link_normal_talk_free_wait
+    ANIM_WAIT = 0x3240,        // link_normal_wait_free
+    ANIM_WALK = 0x3290,        // link_normal_walk_free
+    ANIM_RUN = 0x3140,         // link_normal_run_free
+    ANIM_JUMP = 0x3148,        // link_normal_run_jump
+    ANIM_FALL = 0x2F10,        // link_normal_fall
+    ANIM_FALL_UP = 0x2F20,     // link_normal_fall_up_free
+    ANIM_LANDING = 0x3028,     // link_normal_landing_free
+    ANIM_ROLL = 0x3038,        // link_normal_landing_roll_free
+    ANIM_SLASH = 0x2A80,       // link_fighter_normal_kiru
+    ANIM_THRUST = 0x2AA8,      // link_fighter_pierce_kiru
+    ANIM_CROUCH = 0x2ED8,      // link_normal_defense_wait_free
+    ANIM_JUMP_SLASH = 0x2A48,  // link_fighter_jump_kiru
+    ANIM_GUARD = 0x2ED0,       // link_normal_defense_wait: shield raised in front
+    ANIM_THROW = 0x31C8,       // link_normal_throw_free
+    ANIM_FLY = 0x2C98,         // link_hook_fly_wait
+    ANIM_SWIM = 0x32F0,        // link_swimer_swim
+    ANIM_SWIM_WAIT = 0x3328,   // link_swimer_swim_wait
+    ANIM_SWIM_DEAD = 0x32F8,   // link_swimer_swim_dead
+    ANIM_CLIMB = 0x2E90,       // link_normal_climb_up
+    ANIM_HIT = 0x2F70,         // link_normal_front_hit
+    ANIM_DOWN = 0x2F58,        // link_normal_front_downA
+    ANIM_GET_ITEM = 0x2788,    // link_demo_get_itemB
+    ANIM_SLIP = 0x2EE0,        // link_normal_down_slope_slip
+    ANIM_BRAKE = 0x2DA0,       // link_normal_back_brake
+    ANIM_TALK = 0x31A8,        // link_normal_talk_free_wait
+    ANIM_RIDE_WAIT = 0x33B8,   // link_uma_wait_1
+    ANIM_RIDE_WALK = 0x3380,   // link_uma_anim_walk
+    ANIM_RIDE_TROT = 0x3358,   // link_uma_anim_slowrun
+    ANIM_RIDE_GALLOP = 0x3338, // link_uma_anim_fastrun
+    ANIM_RIDE_JUMP = 0x3348,   // link_uma_anim_jump100
 };
+
+// The Talon Trot is Link riding Epona: everything but leaving it
+bool IsRiding(s32 state) {
+    switch (state) {
+        case BS_14_BTROT_ENTER:
+        case BS_15_BTROT_IDLE:
+        case BS_16_BTROT_WALK:
+        case BS_8_BTROT_JUMP:
+        case BS_71_BTROT_FALL:
+        case BS_45_BTROT_SLIDE:
+        case BS_79_BTROT_LOCKED:
+        case BS_7B_BTROT_OW:
+        case BS_9A_BTROT_DRONE:
+            return true;
+        default:
+            return false;
+    }
+}
+
+// Epona's gait follows Banjo's speed (the Talon Trot goes from 30 to 700, 1000 with the Turbo Talon Trainers), and
+// Link plays the riding animation OoT pairs with it, at the same rate so they stay in step
+struct Ride {
+    PlayAsLinkHorse::Gait gait;
+    float speed;
+    AnimChoice link;
+};
+
+Ride ChooseRide(s32 state) {
+    using PlayAsLinkHorse::Gait;
+    const float speed = baphysics_get_horizontal_velocity();
+    if (state == BS_8_BTROT_JUMP || state == BS_71_BTROT_FALL) {
+        return { Gait::Jump, 1.0f, { ANIM_RIDE_JUMP, false, 1.0f } };
+    }
+    if (speed < 40.0f) {
+        return { Gait::Idle, 1.0f, { ANIM_RIDE_WAIT, true, 1.0f } };
+    }
+    if (speed < 250.0f) {
+        const float rate = std::clamp(speed / 150.0f, 0.6f, 1.6f);
+        return { Gait::Walk, rate, { ANIM_RIDE_WALK, true, rate } };
+    }
+    if (speed < 500.0f) {
+        const float rate = std::clamp(speed / 375.0f, 0.7f, 1.4f);
+        return { Gait::Trot, rate, { ANIM_RIDE_TROT, true, rate } };
+    }
+    const float rate = std::clamp(speed / 650.0f, 0.8f, 1.6f);
+    return { Gait::Gallop, rate, { ANIM_RIDE_GALLOP, true, rate } };
+}
 
 AnimChoice ChooseAnim(s32 state) {
     const float speed = baphysics_get_horizontal_velocity();
@@ -638,6 +709,7 @@ void InstallModel(std::unique_ptr<LinkModel> model) {
     if (model == nullptr) {
         return;
     }
+    sHasEpona = model->epona != nullptr;
     LinkModel* raw = model.release();
     Lighthouse::RunOnGameThread([raw]() {
         if (sModel != nullptr) {
@@ -912,8 +984,10 @@ std::string ImportRom(const std::string& romPath) {
     auto model = std::make_unique<LinkModel>();
     if (!ExtractFile(rom, dmadata, kFileGameplayKeep, model->keep) ||
         !ExtractFile(rom, dmadata, kFileLinkBoy, model->obj) ||
-        !ExtractFile(rom, dmadata, kFileAnimetion, model->anim) || model->keep.size() != kGameplayKeepSize ||
-        model->obj.size() != kLinkBoySize || model->anim.size() != kAnimetionSize) {
+        !ExtractFile(rom, dmadata, kFileAnimetion, model->anim) ||
+        !ExtractFile(rom, dmadata, PlayAsLinkHorse::kFileIndex, model->horse) ||
+        model->keep.size() != kGameplayKeepSize || model->obj.size() != kLinkBoySize ||
+        model->anim.size() != kAnimetionSize) {
         return "Only the USA 1.0 release of Ocarina of Time is supported";
     }
     std::string error;
@@ -923,7 +997,7 @@ std::string ImportRom(const std::string& romPath) {
 
     std::ofstream cache(CachePath(), std::ios::binary | std::ios::trunc);
     cache.write(kCacheMagic, 8);
-    for (const std::vector<uint8_t>* part : { &model->keep, &model->obj, &model->anim }) {
+    for (const std::vector<uint8_t>* part : { &model->keep, &model->obj, &model->anim, &model->horse }) {
         const uint32_t size = (uint32_t)part->size();
         const uint8_t sizeBytes[4] = { (uint8_t)(size >> 24), (uint8_t)(size >> 16), (uint8_t)(size >> 8),
                                        (uint8_t)size };
@@ -966,6 +1040,10 @@ void PollAndroidImport() {
 
 bool IsAvailable() {
     return sAvailable;
+}
+
+bool HasEpona() {
+    return sHasEpona;
 }
 
 const std::string& GetStatus() {
@@ -1037,8 +1115,11 @@ void PlayAsLink_draw(Gfx** gfx, Mtx** mtx, const MtxF* modelMatrix) {
         return;
     }
 
+    const s32 playerState = bs_getState();
+    const bool riding = model->epona != nullptr && IsRiding(playerState);
+    const Ride ride = riding ? ChooseRide(playerState) : Ride{};
+    const AnimChoice choice = riding ? ride.link : ChooseAnim(playerState);
     Pose pose;
-    const AnimChoice choice = ChooseAnim(bs_getState());
     UpdatePose(*model, pose, choice);
 
     // Eyes blink every few seconds unless the animation picks them
@@ -1066,6 +1147,14 @@ void PlayAsLink_draw(Gfx** gfx, Mtx** mtx, const MtxF* modelMatrix) {
         for (int col = 0; col < 4; col++) {
             base.mf[row][col] *= kLinkScale;
         }
+    }
+
+    // Riding, Epona is drawn with Banjo's matrix and Link sits where OoT seats him on her saddle
+    if (riding) {
+        MtxF rider;
+        PlayAsLinkHorse::Draw(*model->epona, gfx, mtx, base, ride.gait, ride.speed,
+                              std::clamp(time_getDelta(), 0.0f, 0.1f), &rider);
+        base = rider;
     }
 
     gDPPipeSync((*gfx)++);
