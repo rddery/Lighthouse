@@ -23,6 +23,8 @@ std::string ImportRom(const std::string& romPath);
 bool IsAvailable();
 // Whether Epona is there too (data imported by an older version doesn't have her).
 bool HasEpona();
+// Whether the fishing rod is there too (data imported by an older version doesn't have it).
+bool HasFishing();
 // Opens a file picker for the ROM, then imports it.
 void PickRom();
 // The result of the last import, for the menu.

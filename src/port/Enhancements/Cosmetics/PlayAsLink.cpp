@@ -1,4 +1,5 @@
 #include "PlayAsLink.h"
+#include "PlayAsLinkFishing.h"
 #include "PlayAsLinkHorse.h"
 
 #include <algorithm>
@@ -19,6 +20,7 @@
 #include <SDL2/SDL.h>
 #include <jni.h>
 #endif
+#include "port/Enhancements/Events/Hooks/Events.h"
 #include "port/Interpolation/FrameInterpolation.h"
 #include "port/FrameHost.h"
 #include "port/ShipInit.hpp"
@@ -62,9 +64,11 @@ constexpr int kFrameSize = kJointCount * 6 + 2; // and the face (eyes and mouth)
 constexpr const char* kCacheName = "oot_link.bin";
 // On Android the system file picker copies the chosen ROM here (see LighthouseActivity.pickOotRom)
 constexpr const char* kAndroidImportName = "oot_link_import.rom";
-// Version 2 adds object_horse (Epona); a version 1 cache still gives Link, without her
+// Version 2 adds object_horse (Epona) and version 3 object_fish (the fishing rod); an older cache still gives Link,
+// without what it lacks
 constexpr char kCacheMagicV1[8] = { 'O', 'O', 'T', 'L', 'I', 'N', 'K', '1' };
-constexpr char kCacheMagic[8] = { 'O', 'O', 'T', 'L', 'I', 'N', 'K', '2' };
+constexpr char kCacheMagicV2[8] = { 'O', 'O', 'T', 'L', 'I', 'N', 'K', '2' };
+constexpr char kCacheMagic[8] = { 'O', 'O', 'T', 'L', 'I', 'N', 'K', '3' };
 
 // Link stands about 6000 units tall in his model space; Banjo about 150 in his.
 constexpr float kLinkScale = 0.026f;
@@ -190,6 +194,8 @@ public:
     std::vector<Gfx*> limbLists; // converted display list of each limb, or nullptr
     std::vector<uint8_t> horse;  // object_horse, when the cache has it
     std::unique_ptr<PlayAsLinkHorse::Epona> epona;
+    std::vector<uint8_t> fish; // object_fish, when the cache has it
+    std::unique_ptr<PlayAsLinkFishing::Fishing> fishing;
     // Hand and back lists for the poses that show his equipment
     Gfx* handSword = nullptr;
     Gfx* handShield = nullptr;
@@ -406,6 +412,11 @@ bool LinkModel::Build(std::string& error) {
         std::string horseError;
         epona = PlayAsLinkHorse::Build(horse, horseError);
     }
+    // The fishing rod is optional too
+    if (!fish.empty()) {
+        std::string fishError;
+        fishing = PlayAsLinkFishing::Build(fish, keep.data(), keep.size(), fishError);
+    }
     return true;
 }
 
@@ -415,6 +426,7 @@ std::unique_ptr<LinkModel> sModel;
 std::vector<std::unique_ptr<LinkModel>> sRetiredModels;
 std::atomic<bool> sAvailable = false;
 std::atomic<bool> sHasEpona = false;
+std::atomic<bool> sHasFishing = false;
 std::string sStatus; // the menu's (render thread)
 
 std::string CachePath() {
@@ -430,7 +442,8 @@ std::unique_ptr<LinkModel> LoadCache() {
     if (!file.read(magic, 8)) {
         return nullptr;
     }
-    const bool withHorse = std::memcmp(magic, kCacheMagic, 8) == 0;
+    const bool withFish = std::memcmp(magic, kCacheMagic, 8) == 0;
+    const bool withHorse = withFish || std::memcmp(magic, kCacheMagicV2, 8) == 0;
     if (!withHorse && std::memcmp(magic, kCacheMagicV1, 8) != 0) {
         return nullptr;
     }
@@ -438,6 +451,9 @@ std::unique_ptr<LinkModel> LoadCache() {
     std::vector<std::vector<uint8_t>*> parts = { &model->keep, &model->obj, &model->anim };
     if (withHorse) {
         parts.push_back(&model->horse);
+    }
+    if (withFish) {
+        parts.push_back(&model->fish);
     }
     for (std::vector<uint8_t>* part : parts) {
         uint8_t sizeBytes[4];
@@ -488,6 +504,11 @@ struct AnimChoice {
     bool centerRoot = false;
     // Starts again when a new move picks it while it's already playing (the Feathery Flap's leap after the jump's)
     bool restartOnNewMove = false;
+    // Plays the animation at this frame instead of letting it run, when not negative (fishing times its throw)
+    float forcedFrame = -1.0f;
+    // Leans toward OoT's reel animations by how far the stick is tilted, from -1 to 1 (fishing)
+    float leanX = 0.0f;
+    float leanY = 0.0f;
 };
 
 // gameplay_keep offsets of the animations used
@@ -524,6 +545,16 @@ enum : uint32_t {
     ANIM_RIDE_GALLOP = 0x3338, // link_uma_anim_fastrun
     ANIM_RIDE_JUMP = 0x3348,   // link_uma_anim_jump100
     ANIM_MOUNT = 0x3398,       // link_uma_left_up: Link climbs onto Epona from her left
+};
+
+// Fishing's
+enum : uint32_t {
+    ANIM_FISH_REEL_DOWN = 0x2C10,  // link_fishing_reel_down
+    ANIM_FISH_REEL_LEFT = 0x2C18,  // link_fishing_reel_left
+    ANIM_FISH_REEL_RIGHT = 0x2C20, // link_fishing_reel_right
+    ANIM_FISH_REEL_UP = 0x2C28,    // link_fishing_reel_up
+    ANIM_FISH_THROW = 0x2C30,      // link_fishing_throw
+    ANIM_FISH_WAIT = 0x2C38,       // link_fishing_wait: the rod held ready
 };
 
 // The Talon Trot is Link riding Epona: everything but leaving it
@@ -736,9 +767,14 @@ void InstallModel(std::unique_ptr<LinkModel> model) {
         return;
     }
     sHasEpona = model->epona != nullptr;
+    sHasFishing = model->fishing != nullptr;
     LinkModel* raw = model.release();
     Lighthouse::RunOnGameThread([raw]() {
         if (sModel != nullptr) {
+            // The rod belongs to the model that is going away: it has to let go of Banjo's controls
+            if (sModel->fishing != nullptr) {
+                PlayAsLinkFishing::Stop(*sModel->fishing);
+            }
             sRetiredModels.push_back(std::move(sModel));
         }
         sModel.reset(raw);
@@ -798,6 +834,9 @@ void UpdatePose(LinkModel& model, Pose& pose, const AnimChoice& choice, s32 stat
         // OoT's animations play at 30 frames per second
         sAnimator.frame += dt * 30.0f * choice.speed;
     }
+    if (choice.forcedFrame >= 0.0f) {
+        sAnimator.frame = choice.forcedFrame;
+    }
 
     sAnimator.state = state;
     const bool sampled = choice.secondHeader != 0
@@ -806,6 +845,24 @@ void UpdatePose(LinkModel& model, Pose& pose, const AnimChoice& choice, s32 stat
     if (!sampled) {
         std::memset(&pose, 0, sizeof(pose));
         return;
+    }
+    // OoT's reeling: the waiting pose, blended toward the last frame of the reel animation for the stick's side to
+    // side (left, right) and for its up and down, and the two blends averaged
+    if (choice.leanX != 0.0f || choice.leanY != 0.0f) {
+        Pose sideways = pose;
+        Pose lengthways = pose;
+        Pose target;
+        float lastFrame = 5.0f;
+        if (choice.leanX != 0.0f && SamplePose(model, choice.leanX < 0.0f ? ANIM_FISH_REEL_LEFT : ANIM_FISH_REEL_RIGHT,
+                                               lastFrame, false, target)) {
+            BlendPose(pose, target, std::min(std::abs(choice.leanX), 1.0f), sideways);
+        }
+        lastFrame = 5.0f;
+        if (choice.leanY != 0.0f && SamplePose(model, choice.leanY < 0.0f ? ANIM_FISH_REEL_UP : ANIM_FISH_REEL_DOWN,
+                                               lastFrame, false, target)) {
+            BlendPose(pose, target, std::min(std::abs(choice.leanY), 1.0f), lengthways);
+        }
+        BlendPose(sideways, lengthways, 0.5f, pose);
     }
     if (choice.holdRootHeight) {
         pose.joints[0][1] = (int16_t)Be16(model.FrameData(model.GetAnim(choice.header), 0) + 2);
@@ -938,6 +995,7 @@ struct DrawState {
     int next;
     Gfx** gfx;
     Gear gear;
+    MtxF leftHand; // the left hand's matrix, for the fishing rod
 };
 
 // The display list of a limb, with the hands and back swapped for the gear Link is showing
@@ -985,6 +1043,9 @@ void DrawLimb(DrawState& state, int index, const MtxF& parent) {
         }
     }
     TranslateRotateZYX(&m, translation, state.pose->joints[index + 1]);
+    if (index == kLeftHandLimb) {
+        state.leftHand = m;
+    }
 
     Gfx* list = LimbList(state, index);
     if (list != nullptr && state.next < state.model->matrixCount) {
@@ -1039,6 +1100,7 @@ std::string ImportRom(const std::string& romPath) {
         !ExtractFile(rom, dmadata, kFileLinkBoy, model->obj) ||
         !ExtractFile(rom, dmadata, kFileAnimetion, model->anim) ||
         !ExtractFile(rom, dmadata, PlayAsLinkHorse::kFileIndex, model->horse) ||
+        !ExtractFile(rom, dmadata, PlayAsLinkFishing::kFileIndex, model->fish) ||
         model->keep.size() != kGameplayKeepSize || model->obj.size() != kLinkBoySize ||
         model->anim.size() != kAnimetionSize) {
         return "Only the USA 1.0 release of Ocarina of Time is supported";
@@ -1050,7 +1112,7 @@ std::string ImportRom(const std::string& romPath) {
 
     std::ofstream cache(CachePath(), std::ios::binary | std::ios::trunc);
     cache.write(kCacheMagic, 8);
-    for (const std::vector<uint8_t>* part : { &model->keep, &model->obj, &model->anim, &model->horse }) {
+    for (const std::vector<uint8_t>* part : { &model->keep, &model->obj, &model->anim, &model->horse, &model->fish }) {
         const uint32_t size = (uint32_t)part->size();
         const uint8_t sizeBytes[4] = { (uint8_t)(size >> 24), (uint8_t)(size >> 16), (uint8_t)(size >> 8),
                                        (uint8_t)size };
@@ -1097,6 +1159,10 @@ bool IsAvailable() {
 
 bool HasEpona() {
     return sHasEpona;
+}
+
+bool HasFishing() {
+    return sHasFishing;
 }
 
 const std::string& GetStatus() {
@@ -1172,6 +1238,18 @@ void PlayAsLink_draw(Gfx** gfx, Mtx** mtx, const MtxF* modelMatrix, s32 kazooieF
     const bool riding = model->epona != nullptr && IsRiding(playerState);
     const Ride ride = riding ? ChooseRide(playerState) : Ride{};
     AnimChoice choice = riding ? ride.link : ChooseAnim(playerState);
+
+    // The rod is out: Link's body is the fishing code's to pose
+    const PlayAsLinkFishing::LinkPose fishPose =
+        model->fishing != nullptr ? PlayAsLinkFishing::GetLinkPose(*model->fishing) : PlayAsLinkFishing::LinkPose{};
+    if (fishPose.active && !riding) {
+        choice = { .header = fishPose.throwing ? ANIM_FISH_THROW : ANIM_FISH_WAIT,
+                   .loop = !fishPose.throwing,
+                   .speed = 1.0f,
+                   .forcedFrame = fishPose.throwing ? fishPose.throwFrame : -1.0f,
+                   .leanX = fishPose.leanX,
+                   .leanY = fishPose.leanY };
+    }
 
     // Starting the Talon Trot, Link climbs onto Epona; the mount plays out even if Banjo sets off straight away
     if (riding && !sAnimator.wasRiding) {
@@ -1250,8 +1328,11 @@ void PlayAsLink_draw(Gfx** gfx, Mtx** mtx, const MtxF* modelMatrix, s32 kazooieF
     *(*gfx)++ = MakeGfx(0xD7000002, 0xFFFFFFFF); // G_TEXTURE: on, full scale
     // G_GEOMETRYMODE: G_ZBUFFER | G_SHADE | G_CULL_BACK | G_LIGHTING | G_SHADING_SMOOTH
     *(*gfx)++ = MakeGfx(0xD9000000, 0x00000001 | 0x00000004 | 0x00000400 | 0x00020000 | 0x00200000);
-    DrawState state = { model, &pose, matrices, 0, gfx, choice.gear };
+    DrawState state = { model, &pose, matrices, 0, gfx, choice.gear, {} };
     DrawLimb(state, 0, base);
+    if (model->fishing != nullptr) {
+        PlayAsLinkFishing::Draw(*model->fishing, gfx, mtx, state.leftHand);
+    }
     *(*gfx)++ = MakeGfx(((uintptr_t)0xDD << 24) | ucode_f3dex, 0);
 
     gDPPipeSync((*gfx)++);
@@ -1261,5 +1342,26 @@ void PlayAsLink_draw(Gfx** gfx, Mtx** mtx, const MtxF* modelMatrix, s32 kazooieF
 
 } // extern "C"
 
-// Link's data from an earlier session
-static RegisterShipInitFunc sPlayAsLinkInit([]() { InstallModel(LoadCache()); }, {});
+// Link's data from an earlier session, and the fishing rod's game frame
+static RegisterShipInitFunc sPlayAsLinkInit(
+    []() {
+        InstallModel(LoadCache());
+        REGISTER_LISTENER(GameFrameUpdate, EVENT_PRIORITY_NORMAL, [](IEvent*) {
+            LinkModel* model = GetModel();
+            if (model == nullptr || model->fishing == nullptr) {
+                return;
+            }
+            // Paused, in a menu, between maps: the rod waits (and puts itself away once play resumes without it
+            // being valid any more)
+            if (getGameMode() == GAME_MODE_3_NORMAL) {
+                PlayAsLinkFishing::Update(*model->fishing, time_getDelta());
+            }
+        });
+        REGISTER_LISTENER(OnMapLoad, EVENT_PRIORITY_NORMAL, [](IEvent*) {
+            LinkModel* model = GetModel();
+            if (model != nullptr && model->fishing != nullptr) {
+                PlayAsLinkFishing::Stop(*model->fishing);
+            }
+        });
+    },
+    {});

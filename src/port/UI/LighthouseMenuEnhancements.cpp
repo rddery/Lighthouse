@@ -794,7 +794,9 @@ void LighthouseMenu::AddMenuEnhancements() {
         if (!status.empty()) {
             ImGui::TextWrapped("%s", status.c_str());
         } else if (PlayAsLink::IsAvailable() && !PlayAsLink::HasEpona()) {
-            ImGui::TextWrapped("Link is ready. Load the ROM again to ride Epona with the Talon Trot.");
+            ImGui::TextWrapped("Link is ready. Load the ROM again to ride Epona with the Talon Trot and to fish.");
+        } else if (PlayAsLink::IsAvailable() && !PlayAsLink::HasFishing()) {
+            ImGui::TextWrapped("Link is ready. Load the ROM again to fish (D-pad Down by the water).");
         } else if (PlayAsLink::IsAvailable()) {
             ImGui::TextWrapped("Link is ready.");
         } else {
