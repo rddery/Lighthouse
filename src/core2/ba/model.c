@@ -116,7 +116,7 @@ void baModel_draw(Gfx **gfx, Mtx **mtx, Vtx **vtx){
                 draw_pos = D_8037C150.unk4;
             }
             if(modelRender_draw(&scratch, mtx, draw_pos, rotation, baModelScale, sp38, baModelBin)){
-                PlayAsLink_draw(gfx, mtx, &D_80383BF8);
+                PlayAsLink_draw(gfx, mtx, &D_80383BF8, baModelDirection == PLAYER_MODEL_DIR_KAZOOIE);
             }
         }
         else if(D_8037C150.unk0){

@@ -479,6 +479,11 @@ struct AnimChoice {
     float speed;
     Gear gear = Gear::Sheathed;
     uint32_t upperHeader = 0; // when set, the upper body plays this animation and `header` only drives the lower body
+    // When set, the animation is a two-part cycle: `header` then this one (OoT splits its climb into left and right)
+    uint32_t secondHeader = 0;
+    // Holds the root at its first frame's height: for animations that move Link with their root, where Banjo
+    // already moves himself
+    bool holdRootHeight = false;
 };
 
 // gameplay_keep offsets of the animations used
@@ -501,7 +506,8 @@ enum : uint32_t {
     ANIM_SWIM = 0x32F0,        // link_swimer_swim
     ANIM_SWIM_WAIT = 0x3328,   // link_swimer_swim_wait
     ANIM_SWIM_DEAD = 0x32F8,   // link_swimer_swim_dead
-    ANIM_CLIMB = 0x2E90,       // link_normal_climb_up
+    ANIM_CLIMB_L = 0x2E80,     // link_normal_climb_upL
+    ANIM_CLIMB_R = 0x2E88,     // link_normal_climb_upR
     ANIM_HIT = 0x2F70,         // link_normal_front_hit
     ANIM_DOWN = 0x2F58,        // link_normal_front_downA
     ANIM_GET_ITEM = 0x2788,    // link_demo_get_itemB
@@ -562,6 +568,9 @@ Ride ChooseRide(s32 state) {
     return { Gait::Gallop, rate, { ANIM_RIDE_GALLOP, true, rate } };
 }
 
+// Banjo's height on the last frame he climbed, for which way the climb plays
+float sClimbLastY = 0.0f;
+
 AnimChoice ChooseAnim(s32 state) {
     const float speed = baphysics_get_horizontal_velocity();
     switch (state) {
@@ -597,8 +606,9 @@ AnimChoice ChooseAnim(s32 state) {
         case BS_3D_FALL_TUMBLING:
         case BS_F_BBUSTER:
             return { ANIM_FALL, true, 1.0f };
+        // The Feathery Flap is a second jump: the leap plays again
         case BS_10_BFLAP:
-            return { ANIM_FALL_UP, true, 1.0f };
+            return { ANIM_JUMP, false, 1.0f };
         // Rat-a-tat Rap pecks about every 0.2 s: one 10-frame jump slash takes 0.33 s at normal speed
         case BS_11_BPECK:
             return { ANIM_JUMP_SLASH, true, 1.3f, Gear::Sword };
@@ -636,10 +646,16 @@ AnimChoice ChooseAnim(s32 state) {
             return { ANIM_SWIM_WAIT, true, 1.0f };
         case BS_54_SWIM_DIE:
             return { ANIM_SWIM_DEAD, false, 1.0f };
+        // OoT's ladder climb, a left then a right reach, played backwards on the way down
         case BS_4F_CLIMB_IDLE:
-            return { ANIM_CLIMB, true, 0.0f };
-        case BS_50_CLIMB_MOVE:
-            return { ANIM_CLIMB, true, 1.0f };
+        case BS_50_CLIMB_MOVE: {
+            f32 position[3];
+            playerPosition_get(position);
+            const float rise = position[1] - sClimbLastY;
+            sClimbLastY = position[1];
+            const float rate = state == BS_4F_CLIMB_IDLE ? 0.0f : rise < -0.01f ? -1.2f : 1.2f;
+            return { ANIM_CLIMB_L, true, rate, Gear::Sheathed, 0, ANIM_CLIMB_R, true };
+        }
         case BS_E_OW:
         case BS_56_RECOIL:
         case BS_7F_DIVE_OW:
@@ -697,6 +713,7 @@ struct Animator {
     float frame = 0.0f;
     uint32_t upperHeader = 0;
     float upperFrame = 0.0f;
+    s32 state = 0;
     Pose morphFrom = {};
     float morph = 1.0f; // 1 once the blend from the previous animation is done
     Pose last = {};
@@ -742,10 +759,27 @@ bool SamplePose(const LinkModel& model, uint32_t header, float& frame, bool loop
     return true;
 }
 
-void UpdatePose(LinkModel& model, Pose& pose, const AnimChoice& choice) {
+// SamplePose for a two-part cycle: `frame` runs over both animations, in either direction
+bool SampleCycle(const LinkModel& model, uint32_t first, uint32_t second, float& frame, Pose& pose) {
+    const float firstCount = (float)model.GetAnim(first).frameCount;
+    const float secondCount = (float)model.GetAnim(second).frameCount;
+    if (firstCount == 0.0f || secondCount == 0.0f) {
+        return false;
+    }
+    frame = std::fmod(frame, firstCount + secondCount);
+    if (frame < 0.0f) {
+        frame += firstCount + secondCount;
+    }
+    float part = frame < firstCount ? frame : frame - firstCount;
+    return SamplePose(model, frame < firstCount ? first : second, part, false, pose);
+}
+
+void UpdatePose(LinkModel& model, Pose& pose, const AnimChoice& choice, s32 state) {
     const float dt = std::clamp(time_getDelta(), 0.0f, 0.1f);
 
-    if (choice.header != sAnimator.header) {
+    // A new animation starts from its first frame, and so does a one-shot one when a new move reuses it (the
+    // Feathery Flap's leap after the jump's)
+    if (choice.header != sAnimator.header || (!choice.loop && state != sAnimator.state)) {
         if (sAnimator.hasLast) {
             sAnimator.morphFrom = sAnimator.last;
             sAnimator.morph = 0.0f;
@@ -757,9 +791,16 @@ void UpdatePose(LinkModel& model, Pose& pose, const AnimChoice& choice) {
         sAnimator.frame += dt * 30.0f * choice.speed;
     }
 
-    if (!SamplePose(model, choice.header, sAnimator.frame, choice.loop, pose)) {
+    sAnimator.state = state;
+    const bool sampled = choice.secondHeader != 0
+                             ? SampleCycle(model, choice.header, choice.secondHeader, sAnimator.frame, pose)
+                             : SamplePose(model, choice.header, sAnimator.frame, choice.loop, pose);
+    if (!sampled) {
         std::memset(&pose, 0, sizeof(pose));
         return;
+    }
+    if (choice.holdRootHeight) {
+        pose.joints[0][1] = (int16_t)Be16(model.FrameData(model.GetAnim(choice.header), 0) + 2);
     }
     if (choice.upperHeader != 0) {
         if (choice.upperHeader != sAnimator.upperHeader) {
@@ -1109,7 +1150,7 @@ Gfx* PlayAsLink_getScratchGfx(void) {
     return sScratch;
 }
 
-void PlayAsLink_draw(Gfx** gfx, Mtx** mtx, const MtxF* modelMatrix) {
+void PlayAsLink_draw(Gfx** gfx, Mtx** mtx, const MtxF* modelMatrix, s32 kazooieFacing) {
     LinkModel* model = GetModel();
     if (model == nullptr) {
         return;
@@ -1120,7 +1161,7 @@ void PlayAsLink_draw(Gfx** gfx, Mtx** mtx, const MtxF* modelMatrix) {
     const Ride ride = riding ? ChooseRide(playerState) : Ride{};
     const AnimChoice choice = riding ? ride.link : ChooseAnim(playerState);
     Pose pose;
-    UpdatePose(*model, pose, choice);
+    UpdatePose(*model, pose, choice, playerState);
 
     // Eyes blink every few seconds unless the animation picks them
     sAnimator.blinkTimer -= std::clamp(time_getDelta(), 0.0f, 0.1f);
@@ -1141,8 +1182,15 @@ void PlayAsLink_draw(Gfx** gfx, Mtx** mtx, const MtxF* modelMatrix) {
     Mtx* matrices = *mtx;
     *mtx += model->matrixCount;
 
-    // Banjo's matrix scaled down to Link's size
+    // Banjo's matrix scaled down to Link's size. In the Talon Trot and the wading boots Banjo's model is turned to
+    // face Kazooie's way (backwards); Link and Epona face the way the player goes.
     MtxF base = *modelMatrix;
+    if (kazooieFacing) {
+        for (int col = 0; col < 4; col++) {
+            base.mf[0][col] = -base.mf[0][col];
+            base.mf[2][col] = -base.mf[2][col];
+        }
+    }
     for (int row = 0; row < 3; row++) {
         for (int col = 0; col < 4; col++) {
             base.mf[row][col] *= kLinkScale;
