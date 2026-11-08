@@ -47,26 +47,34 @@ struct LinkPose {
     // Stick tilt, from -1 to 1: OoT blends the reel animations in by how far the stick leans
     float leanX = 0.0f;
     float leanY = 0.0f;
+    // A fish in his hands: holding it up (the catch animation, `catchFrame` frames in), then putting his arms down
+    enum Catch { None, CatchHold, CatchEnd };
+    Catch catching = None;
+    float catchFrame = 0.0f;
+    // How far his body tips forward with a fish's pull, in radians (negative is back)
+    float tilt = 0.0f;
 };
 LinkPose GetLinkPose(const Fishing& fishing);
 
 // Whether the rod is out.
 bool IsActive(const Fishing& fishing);
 
-// One game frame: D-pad Down takes the rod out and puts it away, B casts, A reels. Keeps Banjo from acting on the
-// controller while the rod is out. `dt` is the game's frame time in seconds. Only call it in normal play.
+// One game frame: D-pad Down takes the rod out (and puts the fish in the water) and puts it away, B casts, A reels.
+// Pulling back on the stick or pressing A when a fish bites hooks it. Keeps Banjo from acting on the controller while
+// the rod is out. `dt` is the game's frame time in seconds. Only call it in normal play.
 void Update(Fishing& fishing, float dt);
 
 // Puts the rod away at once (Play as Link turned off, the model replaced, the map changing...).
 void Stop(Fishing& fishing);
 
-// Matrices Draw takes from the caller's pool.
-constexpr int kMatrixCount = 96;
+// Matrices Draw takes from the caller's pool for the rod, lure and line (the fish take their own).
+constexpr int kMatrixCount = 112;
 
-// Draws the rod in Link's left hand, then the lure and its line in the world. `hand` is the matrix of Link's left
-// hand limb (modelview, with Banjo's model matrix and Link's scale in it). To be called while the renderer is
-// switched to the F3DEX2 microcode, with Link's lighting, so that the lists can be drawn as they are.
-void Draw(Fishing& fishing, Gfx** gfx, Mtx** mtx, const MtxF& hand);
+// Draws the rod in Link's left hand, then the lure, the fish and the line in the world. `hand` and `rightHand` are
+// the matrices of Link's hand limbs (modelview, with Banjo's model matrix and Link's scale in it); the right one is
+// where a caught fish is held. To be called while the renderer is switched to the F3DEX2 microcode, with Link's
+// lighting, so that the lists can be drawn as they are.
+void Draw(Fishing& fishing, Gfx** gfx, Mtx** mtx, const MtxF& hand, const MtxF& rightHand);
 
 } // namespace PlayAsLinkFishing
 

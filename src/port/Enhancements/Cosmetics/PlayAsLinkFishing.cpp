@@ -1,5 +1,7 @@
 #include "PlayAsLinkFishing.h"
 #include "PlayAsLink.h"
+#include "PlayAsLinkFish.h"
+#include "PlayAsLinkUtil.h"
 
 #include <algorithm>
 #include <cmath>
@@ -11,6 +13,7 @@
 #include <fast/ucodehandlers.h>
 
 #include "port/Interpolation/FrameInterpolation.h"
+#include "port/UI/Notification.h"
 
 extern "C" {
 #include "functions.h"
@@ -22,6 +25,8 @@ extern "C" {
 void core1_7F60_guMtxF2L(float mf[4][4], Mtx* m);
 BKCollisionTriangle* mapModel_intersectLine(f32 start[3], f32 end[3], f32 normal[3], u32 filter);
 }
+
+using namespace PlayAsLinkUtil;
 
 // The rod, lure and line are drawn the way OoT's Fishing actor draws them (z_fishing.c: Fishing_DrawRod,
 // Fishing_DrawLureAndLine, Fishing_DrawEffects) and the cast, flight and reeling follow Fishing_UpdateLure, with the
@@ -77,7 +82,7 @@ constexpr float kProbeStep = 70.0f;
 constexpr u32 kWaterFilter = 0xF800FF0F;
 constexpr u32 kSolidFilter = 0x1E0000;
 
-constexpr int kRippleCount = 8;
+constexpr int kRippleCount = 16;
 constexpr float kTickSeconds = 0.05f; // OoT updates 20 times a second
 
 constexpr uint32_t kRodMaterial = 0x113D0;                          // gFishingRodMaterialDL
@@ -100,30 +105,6 @@ constexpr float kRodBendRatios[22] = {
     0.42f, 0.48f, 0.54f, 0.60f, 0.60f, 0.5142f, 0.4285f, 0.3428f, 0.2571f, 0.1714f, 0.0857f,
 };
 
-uint16_t Be16(const uint8_t* p) {
-    return (uint16_t)((p[0] << 8) | p[1]);
-}
-
-uint32_t Be32(const uint8_t* p) {
-    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | p[3];
-}
-
-Gfx MakeGfx(uintptr_t w0, uintptr_t w1) {
-    Gfx gfx;
-    std::memset(&gfx, 0, sizeof(gfx));
-    gfx.words.w0 = w0;
-    gfx.words.w1 = w1;
-    return gfx;
-}
-
-// The renderer marks a segmented address with its lowest bit
-uintptr_t SegmentRef(uint32_t address) {
-    return (uintptr_t)(address & 0x0FFFFFFE) | 1;
-}
-
-constexpr uintptr_t kF3dex2Mtx = 0xDA380003; // G_MTX: G_MTX_MODELVIEW | G_MTX_LOAD | G_MTX_NOPUSH
-constexpr uintptr_t kF3dex2Dl = 0xDE000000;  // G_DL, pushed
-
 float Clamp01(float v) {
     return std::clamp(v, 0.0f, 1.0f);
 }
@@ -131,86 +112,6 @@ float Clamp01(float v) {
 // Moves `value` toward `target` the way a smoothing filter with the given rate (per second) does, at any frame rate
 void Approach(float& value, float target, float rate, float dt) {
     value += (target - value) * (1.0f - std::exp(-rate * dt));
-}
-
-// ---- Matrices, with the operations OoT's sys_matrix.c has (applied on the right, to the local frame) ----
-
-void MtxTranslate(MtxF& m, float x, float y, float z) {
-    m.xw += m.xx * x + m.xy * y + m.xz * z;
-    m.yw += m.yx * x + m.yy * y + m.yz * z;
-    m.zw += m.zx * x + m.zy * y + m.zz * z;
-    m.ww += m.wx * x + m.wy * y + m.wz * z;
-}
-
-void MtxScale(MtxF& m, float x, float y, float z) {
-    m.xx *= x;
-    m.yx *= x;
-    m.zx *= x;
-    m.wx *= x;
-    m.xy *= y;
-    m.yy *= y;
-    m.zy *= y;
-    m.wy *= y;
-    m.xz *= z;
-    m.yz *= z;
-    m.zz *= z;
-    m.wz *= z;
-}
-
-void MtxRotateX(MtxF& m, float angle) {
-    if (angle == 0.0f) {
-        return;
-    }
-    const float sin = std::sin(angle);
-    const float cos = std::cos(angle);
-    float a, b;
-    a = m.xy, b = m.xz, m.xy = a * cos + b * sin, m.xz = b * cos - a * sin;
-    a = m.yy, b = m.yz, m.yy = a * cos + b * sin, m.yz = b * cos - a * sin;
-    a = m.zy, b = m.zz, m.zy = a * cos + b * sin, m.zz = b * cos - a * sin;
-    a = m.wy, b = m.wz, m.wy = a * cos + b * sin, m.wz = b * cos - a * sin;
-}
-
-void MtxRotateY(MtxF& m, float angle) {
-    if (angle == 0.0f) {
-        return;
-    }
-    const float sin = std::sin(angle);
-    const float cos = std::cos(angle);
-    float a, b;
-    a = m.xx, b = m.xz, m.xx = a * cos - b * sin, m.xz = a * sin + b * cos;
-    a = m.yx, b = m.yz, m.yx = a * cos - b * sin, m.yz = a * sin + b * cos;
-    a = m.zx, b = m.zz, m.zx = a * cos - b * sin, m.zz = a * sin + b * cos;
-    a = m.wx, b = m.wz, m.wx = a * cos - b * sin, m.wz = a * sin + b * cos;
-}
-
-void MtxRotateZ(MtxF& m, float angle) {
-    if (angle == 0.0f) {
-        return;
-    }
-    const float sin = std::sin(angle);
-    const float cos = std::cos(angle);
-    float a, b;
-    a = m.xx, b = m.xy, m.xx = a * cos + b * sin, m.xy = b * cos - a * sin;
-    a = m.yx, b = m.yy, m.yx = a * cos + b * sin, m.yy = b * cos - a * sin;
-    a = m.zx, b = m.zy, m.zx = a * cos + b * sin, m.zy = b * cos - a * sin;
-    a = m.wx, b = m.wy, m.wx = a * cos + b * sin, m.wy = b * cos - a * sin;
-}
-
-// Matrix_MultVec3f
-void MtxTransform(const MtxF& m, float x, float y, float z, float out[3]) {
-    out[0] = m.xx * x + m.xy * y + m.xz * z + m.xw;
-    out[1] = m.yx * x + m.yy * y + m.yz * z + m.yw;
-    out[2] = m.zx * x + m.zy * y + m.zz * z + m.zw;
-}
-
-MtxF MtxAt(const float position[3]) {
-    MtxF m;
-    std::memset(&m, 0, sizeof(m));
-    m.xx = m.yy = m.zz = m.ww = 1.0f;
-    m.xw = position[0];
-    m.yw = position[1];
-    m.zw = position[2];
-    return m;
 }
 
 // A matrix whose z axis runs from `from` to `to` (the line's segments are one unit of x wide and 1000 long in
@@ -255,6 +156,8 @@ enum class Phase {
     Casting,  // B was let go; the throw plays, then the lure flies
     Flying,
     Landed,   // the lure rests on the water (or ground), and can be reeled
+    Hooked,   // a fish has the lure: it bites, the hook is set, and it is fought and reeled in
+    Catching, // the fish is in Link's hands, then goes back into the water
     Returning // reeled all the way: the lure goes up to the rod's tip
 };
 
@@ -285,11 +188,19 @@ struct State {
     float leanY = 0.0f;
     float leanXPrev = 0.0f;
     float leanYPrev = 0.0f;
+    float bodyLean = 0.0f; // the way Link's body tips with the fish's pull, in 16-bit angles (shape.rot.x)
+    float prevStickX = 0.0f;
+    float prevStickY = 0.0f;
 
     // The rod
-    float bendY = 0.0f; // sRodBendRotY
-    float bendX = 0.0f; // D_80B7A6AC
-    float flick = 0.0f; // D_80B7A6B8: the whip just before the cast
+    float bendY = 0.0f;     // sRodBendRotY
+    float bendX = 0.0f;     // D_80B7A6AC
+    float flick = 0.0f;     // D_80B7A6B8: the whip just before the cast
+    float rodTilt = 0.0f;   // D_80B7A6C0: the rod is raised against a fish's pull
+    float fightBend = 0.0f; // D_80B7A6BC: and bent by it
+    int hitTicks = 0;       // sRodHitTimer: the hard tug of setting the hook
+    float rodTickTime = 0.0f;
+    int rodTicks = 0;
     float idleTime = 0.0f;
     float tip[3] = {}; // the rod's tip in the world, from the last draw
     bool tipValid = false;
@@ -309,6 +220,18 @@ struct State {
     float sag = 0.0f;
     float returnTime = 0.0f;
     float returnFrom[3] = {};
+    float wigglePos = 0.0f;   // sLureWigglePosY: the lure still jumping from a twitch
+    float wiggleDelay = 0.0f; // D_80B7E150
+    float wiggleSign = 1.0f;
+    int wiggleLevel = 0; // 1 or 2 on the frame the lure is twitched, for the fish
+
+    // A fish on the lure
+    float catchTime = 0.0f;
+    bool catchReleased = false; // the fish has been let go; Link's arms come down
+    bool catchTextShown = false;
+    float catchLength = 0.0f;
+    bool catchLoach = false;
+    float mouth[3] = {}; // where the fish's mouth was last, in the world
 
     Ripple ripples[kRippleCount];
     float rippleTick = 0.0f;
@@ -331,6 +254,7 @@ struct PlayAsLinkFishing::Fishing::Data {
     Gfx* rippleModel = nullptr;
 
     State state;
+    std::unique_ptr<PlayAsLinkFish::School> school; // null if the fish couldn't be read
 
     // One native array per (address, count) a list loads: loads can overlap and some arrays are only 8-byte
     // aligned
@@ -504,6 +428,15 @@ std::unique_ptr<Fishing> Build(std::vector<uint8_t> objectFish, const uint8_t* g
             return nullptr;
         }
     }
+
+    // The fish are optional: without them the rod still casts
+    std::string fishError;
+    data.school = PlayAsLinkFish::Build(
+        data.fish.data(), data.fish.size(), [&data](uint32_t address) { return data.ConvertList(address, 0); },
+        fishError);
+    if (data.school == nullptr) {
+        SPDLOG_WARN("Play as Link: no fish ({})", fishError);
+    }
     return fishing;
 }
 
@@ -515,7 +448,7 @@ namespace {
 
 struct Input {
     bool a, b, down;
-    bool bPressed, downPressed;
+    bool aPressed, bPressed, downPressed;
     float stickX, stickY;
 };
 
@@ -532,6 +465,7 @@ Input ReadInput(State& state) {
     in.a = face[FACE_BUTTON(BUTTON_A)] != 0;
     in.b = face[FACE_BUTTON(BUTTON_B)] != 0;
     in.down = dpad[DPAD_BUTTON(BUTTON_D_DOWN)] != 0;
+    in.aPressed = in.a && !state.aHeld;
     in.bPressed = in.b && !state.bHeld;
     in.downPressed = in.down && !state.downHeld;
     in.stickX = std::clamp(stick[0], -1.0f, 1.0f);
@@ -599,8 +533,8 @@ void PlayerPosition(float position[3]) {
     position[0] = p[0], position[1] = p[1], position[2] = p[2];
 }
 
-// Water within casting range in front of the player, deep enough for a lure to float on
-bool WaterAhead() {
+// Water within casting range in front of the player, deep enough for a lure to float on. `at` gets the nearest of it.
+bool WaterAhead(float at[3]) {
     float position[3];
     PlayerPosition(position);
     const float yaw = yaw_get() * kPi / 180.0f;
@@ -614,6 +548,7 @@ bool WaterAhead() {
             continue;
         }
         if (isWater && surface > position[1] - 700.0f && surface < position[1] + 120.0f && surface > ground + 12.0f) {
+            at[0] = x, at[1] = surface, at[2] = z;
             return true;
         }
     }
@@ -674,9 +609,39 @@ void TickRipples(State& s) {
     }
 }
 
-void Release(State& s) {
+// What the fish need of the map, and a place for the ripples they make
+class Pond : public PlayAsLinkFish::World {
+public:
+    explicit Pond(State& state) : mState(state) {
+    }
+
+    bool WaterAt(float x, float z, float refY, float* surface, float* ground) override {
+        bool isWater;
+        float waterSurface, floor;
+        if (!SurfaceBelow(x, refY, z, 220.0f, 1200.0f, &isWater, &waterSurface, &floor) || !isWater ||
+            floor < waterSurface - 3000.0f) {
+            return false;
+        }
+        *surface = waterSurface;
+        *ground = floor;
+        return true;
+    }
+
+    void Ripple(const float position[3], float scale, float target, float alpha) override {
+        SpawnRipple(mState, position, scale, target, alpha);
+    }
+
+private:
+    State& mState;
+};
+
+void Release(PlayAsLinkFishing::Fishing::Data& data) {
+    State& s = data.state;
     if (s.phase != Phase::Off) {
         LockBanjo(false);
+    }
+    if (data.school != nullptr) {
+        PlayAsLinkFish::Clear(*data.school);
     }
     // The buttons are still held, and must not count as pressed again
     State fresh;
@@ -786,6 +751,34 @@ void UpdateLanded(State& s, const Input& in, float dt) {
     s.bob = std::max(0.0f, s.bob - dt * 0.7f);
 
     const bool reeling = in.a && s.landedTime >= kLandedDelay;
+
+    // Twitching the lure with a flick of the stick or B (Fishing_UpdateLure case 3) draws the fish's eye. Reeling
+    // uses the stick to steer the lure instead.
+    s.wiggleDelay = std::max(0.0f, s.wiggleDelay - dt);
+    s.wigglePos = std::max(0.0f, s.wigglePos - 6.0f * dt); // sLureWigglePosY falls 0.3 a tick
+    if (s.onWater && !reeling && s.wiggleDelay <= 0.0f && s.landedTime >= kLandedDelay) {
+        const float x = in.stickX * 80.0f, y = in.stickY * 80.0f; // OoT's stick range
+        float wiggle = 0.0f;
+        if (std::abs(x) > 30.0f) {
+            wiggle = std::abs(x - s.prevStickX * 80.0f) / 60.0f;
+        } else if (std::abs(y) > 30.0f) {
+            wiggle = std::abs(y - s.prevStickY * 80.0f) / 60.0f;
+        }
+        wiggle = std::min(wiggle, 1.0f);
+        if (in.bPressed) {
+            wiggle = 0.5f;
+        }
+        if (wiggle > 0.2f && s.wigglePos < 4.0f) {
+            s.wiggleDelay = 5.0f * kTickSeconds;
+            s.wiggleLevel = wiggle > 0.8f ? 2 : 1;
+            s.wigglePos = wiggle * 6.0f;
+            s.wiggleSign = -s.wiggleSign;
+            s.lureYaw += wiggle * s.wiggleSign * 0.6f;
+            s.bob = std::max(s.bob, 0.6f);
+            float at[3] = { s.lure[0], s.surfaceY, s.lure[2] };
+            SpawnRipple(s, at, 30.0f, 300.0f, 150.0f);
+        }
+    }
     // The direction from the lure to Link, and the one across it
     float toLink[2] = { player[0] - s.lure[0], player[2] - s.lure[2] };
     const float distance = std::sqrt(toLink[0] * toLink[0] + toLink[1] * toLink[1]);
@@ -813,6 +806,12 @@ void UpdateLanded(State& s, const Input& in, float dt) {
     }
     s.lure[0] += moveX * dt;
     s.lure[2] += moveZ * dt;
+    // A twitch jerks the lure toward Link a little
+    if (s.wigglePos > 0.0f) {
+        const float jerk = s.wigglePos * kWorldScale * 0.25f * (dt / kTickSeconds);
+        s.lure[0] += toLink[0] * jerk;
+        s.lure[2] += toLink[1] * jerk;
+    }
 
     // Follow the surface under the lure's new place: the water ends at the shore
     bool isWater;
@@ -854,6 +853,145 @@ void UpdateLanded(State& s, const Input& in, float dt) {
     }
 }
 
+// How long Link holds the fish up, in seconds, before it goes back (OoT waits for the player to read the text)
+constexpr float kCatchHoldSeconds = 3.4f;
+constexpr float kCatchEndSeconds = 0.7f; // the arms coming down
+constexpr float kCatchTextSeconds = 0.5f;
+
+// OoT's weight for a fish (z_fishing.c: SQ(length) * 0.0036 + 0.5); a Hylian Loach counts twice its length
+int FishWeight(float length, bool loach) {
+    const int counted = (int)(loach ? 2.0f * length : length);
+    return (int)((float)(counted * counted) * 0.0036f + 0.5f);
+}
+
+void AnnounceCatch(const State& s) {
+    const int weight = FishWeight(s.catchLength, s.catchLoach);
+    Notification::Emit({ .prefix = s.catchLoach ? "Caught a Hylian Loach!" : "Caught a fish!",
+                         .prefixColor = ImVec4(0.4f, 1.0f, 0.5f, 1.0f),
+                         .message = "It weighs " + std::to_string(weight) + (weight == 1 ? " pound." : " pounds."),
+                         .messageColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f),
+                         .remainingTime = 6.0f });
+}
+
+PlayAsLinkFish::Frame MakeFishFrame(const State& s, const Input& in, float dt) {
+    PlayAsLinkFish::Frame frame;
+    frame.dt = dt;
+    PlayerPosition(frame.player);
+    frame.playerYaw = yaw_get();
+    std::memcpy(frame.tip, s.tip, sizeof(frame.tip));
+    std::memcpy(frame.lure, s.lure, sizeof(frame.lure));
+    frame.lureYaw = s.lureYaw;
+    if (s.phase == Phase::Flying) {
+        frame.castState = 1;
+    } else if (s.phase == Phase::Landed && s.onWater) {
+        // OoT lets the lure sit for 10 ticks before fish pay it any mind and it can be reeled
+        frame.castState = s.landedTime >= 0.5f ? 3 : 2;
+        frame.lureSplash = s.landedTime < 0.5f;
+    }
+    frame.wiggle = s.wiggleLevel;
+    frame.wiggling = s.wigglePos > 1.0f;
+    frame.a = in.a;
+    frame.aPressed = in.aPressed;
+    frame.bPressed = in.bPressed && s.phase == Phase::Landed;
+    frame.stickX = in.stickX;
+    frame.stickY = in.stickY;
+    return frame;
+}
+
+// The rod and Link's body, as a fish pulls (Fishing_DrawRod's D_80B7A6C0 and D_80B7A6BC, and the player's tilt), a
+// game tick at a time
+void TickRod(State& s, const PlayAsLinkFish::Fight& fight, bool onTheLine) {
+    s.rodTicks++;
+    auto approach = [](float& value, float target, float fraction, float step) {
+        const float stepSize = std::clamp((target - value) * fraction, -step, step);
+        value += stepSize;
+    };
+    auto approachZero = [](float& value, float fraction, float step) {
+        value -= std::clamp(value * fraction, -step, step);
+    };
+    float leanTarget = 0.0f;
+    float leanScale = 5.0f;
+    float leanStep = 1000.0f;
+    if (s.hitTicks > 0) {
+        // The hook is set: the rod snaps up and Link is pulled back
+        s.hitTicks--;
+        approach(s.rodTilt, 35.0f, 1.0f, 100.0f);
+        approach(s.fightBend, -0.8f, 1.0f, 0.4f);
+        leanTarget = -4000.0f;
+        leanScale = 2.0f;
+        leanStep = 15000.0f;
+    } else if (onTheLine && fight.hooked) {
+        leanTarget = std::sin(s.rodTicks * 25600.0f * kPi / 32768.0f) * 1500.0f;
+    } else {
+        approachZero(s.rodTilt, 0.1f, 10.0f);
+        approachZero(s.fightBend, 1.0f, 0.05f);
+    }
+    s.bodyLean += std::clamp((leanTarget - s.bodyLean) / leanScale, -leanStep, leanStep);
+    if (onTheLine && fight.pulling) {
+        approach(s.rodTilt, 35.0f, 0.1f, 3.5f);
+        approach(s.fightBend, fight.bendTarget, 0.3f, 0.1f);
+    }
+}
+
+// What the fish did this frame: the bite, the hook, the catch or the escape
+void OnFish(PlayAsLinkFishing::Fishing::Data& data, State& s, const PlayAsLinkFish::Result& result) {
+    const PlayAsLinkFish::Fight& fight = PlayAsLinkFish::GetFight(*data.school);
+    if (result.bit && s.phase == Phase::Landed) {
+        s.phase = Phase::Hooked;
+        s.catchTime = 0.0f;
+        // OoT lets the controller rumble; here the rod tugs, and the player is told what to do
+        Notification::Emit({ .prefix = "Bite!",
+                             .prefixColor = ImVec4(1.0f, 0.85f, 0.3f, 1.0f),
+                             .message = "Press A or pull back!",
+                             .messageColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f),
+                             .remainingTime = 3.0f });
+    }
+    if (result.hookSet) {
+        s.hitTicks = 10;
+    }
+    for (int i = 0; i < result.ticks; i++) {
+        TickRod(s, fight, s.phase == Phase::Hooked);
+    }
+    if (s.phase != Phase::Hooked) {
+        return;
+    }
+    std::memcpy(s.mouth, fight.mouth, sizeof(s.mouth));
+    if (result.caught) {
+        s.phase = Phase::Catching;
+        s.catchTime = 0.0f;
+        s.catchReleased = false;
+        s.catchTextShown = false;
+        s.catchLength = fight.length;
+        s.catchLoach = fight.loach;
+        s.hitTicks = 0;
+    } else if (result.gotAway) {
+        // The lure is where the fish had it, afloat again
+        const bool missed = result.missed;
+        Notification::Emit({ .prefix = missed ? "Too slow..." : "It got away...",
+                             .prefixColor = ImVec4(1.0f, 0.5f, 0.4f, 1.0f),
+                             .message = missed ? "The fish let go" : "The line went slack",
+                             .messageColor = ImVec4(0.9f, 0.9f, 0.9f, 1.0f),
+                             .remainingTime = 3.0f });
+        bool isWater;
+        float surface, ground;
+        std::memcpy(s.lure, s.mouth, sizeof(s.lure));
+        if (SurfaceBelow(s.lure[0], s.lure[1], s.lure[2], 300.0f, 1200.0f, &isWater, &surface, &ground)) {
+            s.onWater = isWater;
+            s.surfaceY = surface;
+            s.lure[1] = surface;
+            s.velocity[0] = s.velocity[1] = s.velocity[2] = 0.0f;
+            s.landedTime = kLandedDelay + 0.6f;
+            s.reelSpeed = kReelStartSpeed;
+            s.bob = 1.0f;
+            s.phase = Phase::Landed;
+        } else {
+            s.returnTime = 0.0f;
+            std::memcpy(s.returnFrom, s.mouth, sizeof(s.returnFrom));
+            s.phase = Phase::Returning;
+        }
+    }
+}
+
 } // namespace
 
 namespace PlayAsLinkFishing {
@@ -867,9 +1005,14 @@ LinkPose GetLinkPose(const Fishing& fishing) {
     }
     pose.throwing = s.phase == Phase::Charging || s.throwPlaying;
     pose.throwFrame = s.throwFrame;
-    if (s.phase == Phase::Flying || s.phase == Phase::Landed) {
+    if (s.phase == Phase::Flying || s.phase == Phase::Landed || s.phase == Phase::Hooked) {
         pose.leanX = s.leanX;
         pose.leanY = s.leanY;
+    }
+    pose.tilt = s.bodyLean * kPi / 32768.0f;
+    if (s.phase == Phase::Catching) {
+        pose.catching = s.catchReleased ? LinkPose::CatchEnd : LinkPose::CatchHold;
+        pose.catchFrame = (s.catchReleased ? s.catchTime - kCatchHoldSeconds : s.catchTime) * 30.0f;
     }
     return pose;
 }
@@ -879,36 +1022,47 @@ bool IsActive(const Fishing& fishing) {
 }
 
 void Stop(Fishing& fishing) {
-    Release(fishing.data->state);
+    Release(*fishing.data);
 }
 
 void Update(Fishing& fishing, float dt) {
-    State& s = fishing.data->state;
+    PlayAsLinkFishing::Fishing::Data& data = *fishing.data;
+    State& s = data.state;
     dt = std::clamp(dt, 0.0f, 0.1f);
     const Input in = ReadInput(s);
 
     const bool valid = PlayAsLink_shouldDraw(baModel_getModelId()) && player_getTransformation() == TRANSFORM_1_BANJO &&
                        bs_getState() == BS_1_IDLE && !gctransition_8030BDC0();
     if (s.phase == Phase::Off) {
-        if (in.downPressed && valid && !player_inWater() && WaterAhead()) {
+        float water[3];
+        if (in.downPressed && valid && !player_inWater() && WaterAhead(water)) {
             s = State();
             s.phase = Phase::Ready;
             s.downHeld = in.down;
             s.aHeld = in.a;
             s.bHeld = in.b;
+            s.prevStickX = in.stickX;
+            s.prevStickY = in.stickY;
             LockBanjo(true);
+            // The fish are in the water in front of Link from the moment the rod comes out
+            if (data.school != nullptr) {
+                float player[3];
+                PlayerPosition(player);
+                Pond pond(s);
+                PlayAsLinkFish::Spawn(*data.school, pond, water, player, yaw_get());
+            }
         }
         return;
     }
     if (!valid || in.downPressed) {
-        Release(s);
+        Release(data);
         return;
     }
     // Banjo's input is read before this runs, so keep it switched off (something else may have switched it on)
     LockBanjo(true);
 
     // Stick tilt for Link's reeling animations and the rod's bend
-    const bool lureOut = s.phase == Phase::Flying || s.phase == Phase::Landed;
+    const bool lureOut = s.phase == Phase::Flying || s.phase == Phase::Landed || s.phase == Phase::Hooked;
     s.leanXPrev = s.leanX;
     s.leanYPrev = s.leanY;
     Approach(s.leanX, lureOut ? in.stickX : 0.0f, 7.0f, dt);
@@ -939,7 +1093,11 @@ void Update(Fishing& fishing, float dt) {
     if (lureOut) {
         const float dx = s.lure[0] - s.tip[0], dy = s.lure[1] - s.tip[1], dz = s.lure[2] - s.tip[2];
         const float span = std::sqrt(dx * dx + dy * dy + dz * dz);
-        sagTarget = std::min(span * (s.phase == Phase::Flying ? 0.03f : in.a ? 0.04f : 0.12f), 90.0f);
+        // A fish on the line keeps it taut
+        sagTarget = std::min(span * (s.phase == Phase::Flying || s.phase == Phase::Hooked ? 0.03f
+                                     : in.a                                               ? 0.04f
+                                                                                          : 0.12f),
+                             90.0f);
     }
     Approach(s.sag, sagTarget, 4.0f, dt);
 
@@ -969,7 +1127,7 @@ void Update(Fishing& fishing, float dt) {
                 }
             } else if (s.bArmed) {
                 // A quick press of B with the lure in puts the rod away
-                Release(s);
+                Release(data);
                 return;
             }
             break;
@@ -994,6 +1152,38 @@ void Update(Fishing& fishing, float dt) {
         case Phase::Landed:
             UpdateLanded(s, in, dt);
             break;
+        case Phase::Hooked: {
+            // Link turns to face the fish (the player's yaw approaches the way to it, at most 7 degrees a tick)
+            const PlayAsLinkFish::Fight& fight = PlayAsLinkFish::GetFight(*data.school);
+            const float yaw = yaw_get();
+            const float delta = std::remainder(fight.faceYaw - yaw, 360.0f);
+            const float step = std::clamp(delta * (1.0f - std::exp(-4.5f * dt)), -140.0f * dt, 140.0f * dt);
+            yaw_set(yaw + step);
+            yaw_setIdeal(yaw + step);
+            break;
+        }
+        case Phase::Catching:
+            s.catchTime += dt;
+            if (!s.catchTextShown && s.catchTime >= kCatchTextSeconds) {
+                s.catchTextShown = true;
+                AnnounceCatch(s);
+            }
+            if (!s.catchReleased && s.catchTime >= kCatchHoldSeconds) {
+                // Back in the water
+                s.catchReleased = true;
+                Pond pond(s);
+                float player[3];
+                PlayerPosition(player);
+                PlayAsLinkFish::ReleaseCaught(*data.school, pond, player, yaw_get());
+            }
+            if (s.catchReleased && s.catchTime >= kCatchHoldSeconds + kCatchEndSeconds) {
+                // The lure comes back to the rod from where the fish was held
+                s.returnTime = 0.0f;
+                std::memcpy(s.returnFrom, s.mouth, sizeof(s.returnFrom));
+                s.lurePitch = 0.0f;
+                s.phase = Phase::Returning;
+            }
+            break;
         case Phase::Returning:
             s.returnTime += dt;
             if (s.returnTime >= kLureReturnSeconds) {
@@ -1004,6 +1194,16 @@ void Update(Fishing& fishing, float dt) {
         case Phase::Off:
             break;
     }
+
+    // The fish: they swim whenever the rod is out, and the lure's doings are theirs to answer
+    if (data.school != nullptr) {
+        Pond pond(s);
+        const PlayAsLinkFish::Result result = PlayAsLinkFish::Update(*data.school, pond, MakeFishFrame(s, in, dt));
+        s.wiggleLevel = 0;
+        OnFish(data, s, result);
+    }
+    s.prevStickX = in.stickX;
+    s.prevStickY = in.stickY;
 
     // The throw plays out after the cast, then Link waits again
     if (s.throwPlaying && s.phase != Phase::Casting && s.phase != Phase::Charging) {
@@ -1017,7 +1217,7 @@ void Update(Fishing& fishing, float dt) {
     }
 }
 
-void Draw(Fishing& fishing, Gfx** gfx, Mtx** mtx, const MtxF& hand) {
+void Draw(Fishing& fishing, Gfx** gfx, Mtx** mtx, const MtxF& hand, const MtxF& rightHand) {
     Fishing::Data& data = *fishing.data;
     State& s = data.state;
     if (s.phase == Phase::Off) {
@@ -1053,13 +1253,13 @@ void Draw(Fishing& fishing, Gfx** gfx, Mtx** mtx, const MtxF& hand) {
     *(*gfx)++ = MakeGfx(kF3dex2Dl, (uintptr_t)data.rodMaterial);
     gDPSetPrimColor((*gfx)++, 0, 0, 255, 155, 0, 255);
     MtxF rod = hand;
-    MtxTranslate(rod, 0.0f, 400.0f, 0.0f); // adult Link
-    MtxRotateY(rod, 0.41f * kPi);
+    MtxTranslate(rod, 0.0f, 400.0f, 0.0f);                               // adult Link
+    MtxRotateY(rod, (s.phase == Phase::Catching ? 0.56f : 0.41f) * kPi); // swung aside for the fish in Link's hands
     MtxRotateX(rod, -kPi / 5.0000003f);
     MtxRotateZ(rod, s.leanX * 0.5f + 3.0f * kPi / 20.0f);
-    MtxRotateX(rod, 20.0f * 0.01f * kPi);
+    MtxRotateX(rod, (s.rodTilt + 20.0f) * 0.01f * kPi);
     MtxScale(rod, 0.70000005f, 0.70000005f, 0.70000005f);
-    const float bend = s.bendX + s.flick;
+    const float bend = s.bendX + s.flick + s.fightBend * (((s.leanY - 1.0f) * -0.25f) + 0.5f);
     MtxTranslate(rod, 0.0f, 0.0f, -1300.0f);
     for (int i = 0; i < 22; i++) {
         MtxRotateY(rod, s.bendY * kRodBendRatios[i] * 0.5f);
@@ -1111,6 +1311,12 @@ void Draw(Fishing& fishing, Gfx** gfx, Mtx** mtx, const MtxF& hand) {
         pitch = 0.0f;
         yaw = std::atan2(-s.velocity[0], -s.velocity[2]);
         s.lureYaw = yaw;
+    } else if ((s.phase == Phase::Hooked || s.phase == Phase::Catching) && data.school != nullptr) {
+        // In the fish's mouth, with the line straight to it
+        const PlayAsLinkFish::Fight& fight = PlayAsLinkFish::GetFight(*data.school);
+        std::memcpy(lure, fight.mouth, sizeof(lure));
+        pitch = 0.0f;
+        yaw = fight.mouthYaw;
     } else {
         std::memcpy(lure, s.lure, sizeof(lure));
     }
@@ -1128,6 +1334,9 @@ void Draw(Fishing& fishing, Gfx** gfx, Mtx** mtx, const MtxF& hand) {
 
     float tie[3], hookPositions[2][3];
     MtxTransform(lureMatrix, -850.0f, 0.0f, 0.0f, tie);
+    if (s.phase == Phase::Hooked || s.phase == Phase::Catching) {
+        std::memcpy(tie, lureRelative, sizeof(tie));
+    }
     MtxTransform(lureMatrix, 500.0f, 0.0f, -300.0f, hookPositions[0]);
     MtxTransform(lureMatrix, 2100.0f, 0.0f, -50.0f, hookPositions[1]);
     // The hooks hang down from the lure
@@ -1142,6 +1351,11 @@ void Draw(Fishing& fishing, Gfx** gfx, Mtx** mtx, const MtxF& hand) {
         draw(hook, data.lureHook);
     }
     FrameInterpolation_RecordCloseChild();
+
+    // ---- The fish ----
+    if (data.school != nullptr) {
+        PlayAsLinkFish::Draw(*data.school, gfx, mtx, camera, rightHand, yaw_get());
+    }
 
     // ---- Ripples (Fishing_DrawEffects) ----
     FrameInterpolation_RecordOpenChild(&sScopeKey, 3);

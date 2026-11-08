@@ -1,6 +1,7 @@
 #include "PlayAsLink.h"
 #include "PlayAsLinkFishing.h"
 #include "PlayAsLinkHorse.h"
+#include "PlayAsLinkUtil.h"
 
 #include <algorithm>
 #include <atomic>
@@ -549,6 +550,8 @@ enum : uint32_t {
 
 // Fishing's
 enum : uint32_t {
+    ANIM_FISH_CATCH = 0x2C00,      // link_fishing_fish_catch: holding the fish up
+    ANIM_FISH_CATCH_END = 0x2C08,  // link_fishing_fish_catch_end: arms down again
     ANIM_FISH_REEL_DOWN = 0x2C10,  // link_fishing_reel_down
     ANIM_FISH_REEL_LEFT = 0x2C18,  // link_fishing_reel_left
     ANIM_FISH_REEL_RIGHT = 0x2C20, // link_fishing_reel_right
@@ -1000,7 +1003,8 @@ struct DrawState {
     int next;
     Gfx** gfx;
     Gear gear;
-    MtxF leftHand; // the left hand's matrix, for the fishing rod
+    MtxF leftHand;  // the left hand's matrix, for the fishing rod
+    MtxF rightHand; // and the right's, for a fish held up
 };
 
 // The display list of a limb, with the hands and back swapped for the gear Link is showing
@@ -1050,6 +1054,8 @@ void DrawLimb(DrawState& state, int index, const MtxF& parent) {
     TranslateRotateZYX(&m, translation, state.pose->joints[index + 1]);
     if (index == kLeftHandLimb) {
         state.leftHand = m;
+    } else if (index == kRightHandLimb) {
+        state.rightHand = m;
     }
 
     Gfx* list = LimbList(state, index);
@@ -1247,7 +1253,13 @@ void PlayAsLink_draw(Gfx** gfx, Mtx** mtx, const MtxF* modelMatrix, s32 kazooieF
     // The rod is out: Link's body is the fishing code's to pose
     const PlayAsLinkFishing::LinkPose fishPose =
         model->fishing != nullptr ? PlayAsLinkFishing::GetLinkPose(*model->fishing) : PlayAsLinkFishing::LinkPose{};
-    if (fishPose.active && !riding) {
+    if (fishPose.active && !riding && fishPose.catching != PlayAsLinkFishing::LinkPose::None) {
+        choice = { .header = fishPose.catching == PlayAsLinkFishing::LinkPose::CatchHold ? ANIM_FISH_CATCH
+                                                                                         : ANIM_FISH_CATCH_END,
+                   .loop = false,
+                   .speed = 1.0f,
+                   .forcedFrame = fishPose.catchFrame };
+    } else if (fishPose.active && !riding) {
         choice = { .header = fishPose.throwing ? ANIM_FISH_THROW : ANIM_FISH_WAIT,
                    .loop = !fishPose.throwing,
                    .speed = 1.0f,
@@ -1330,6 +1342,11 @@ void PlayAsLink_draw(Gfx** gfx, Mtx** mtx, const MtxF* modelMatrix, s32 kazooieF
         }
     }
 
+    // A hooked fish pulls him forward or back
+    if (fishPose.active && !riding && fishPose.tilt != 0.0f) {
+        PlayAsLinkUtil::MtxRotateX(base, fishPose.tilt);
+    }
+
     // Riding, Epona is drawn with Banjo's matrix and Link sits where OoT seats him on her saddle
     if (riding) {
         MtxF rider;
@@ -1357,10 +1374,10 @@ void PlayAsLink_draw(Gfx** gfx, Mtx** mtx, const MtxF* modelMatrix, s32 kazooieF
     *(*gfx)++ = MakeGfx(0xD7000002, 0xFFFFFFFF); // G_TEXTURE: on, full scale
     // G_GEOMETRYMODE: G_ZBUFFER | G_SHADE | G_CULL_BACK | G_LIGHTING | G_SHADING_SMOOTH
     *(*gfx)++ = MakeGfx(0xD9000000, 0x00000001 | 0x00000004 | 0x00000400 | 0x00020000 | 0x00200000);
-    DrawState state = { model, &pose, matrices, 0, gfx, choice.gear, {} };
+    DrawState state = { model, &pose, matrices, 0, gfx, choice.gear, {}, {} };
     DrawLimb(state, 0, base);
     if (model->fishing != nullptr) {
-        PlayAsLinkFishing::Draw(*model->fishing, gfx, mtx, state.leftHand);
+        PlayAsLinkFishing::Draw(*model->fishing, gfx, mtx, state.leftHand, state.rightHand);
     }
     *(*gfx)++ = MakeGfx(((uintptr_t)0xDD << 24) | ucode_f3dex, 0);
 
