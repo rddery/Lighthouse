@@ -793,6 +793,8 @@ void LighthouseMenu::AddMenuEnhancements() {
         const std::string& status = PlayAsLink::GetStatus();
         if (!status.empty()) {
             ImGui::TextWrapped("%s", status.c_str());
+        } else if (PlayAsLink::IsAvailable() && !PlayAsLink::HasEpona()) {
+            ImGui::TextWrapped("Link is ready. Load the ROM again to ride Epona with the Talon Trot.");
         } else if (PlayAsLink::IsAvailable()) {
             ImGui::TextWrapped("Link is ready.");
         } else {
