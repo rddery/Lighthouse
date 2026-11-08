@@ -1,6 +1,7 @@
 #include "PlayAsLink.h"
 #include "PlayAsLinkFishing.h"
 #include "PlayAsLinkHorse.h"
+#include "PlayAsLinkUtil.h"
 
 #include <algorithm>
 #include <atomic>
@@ -549,6 +550,8 @@ enum : uint32_t {
 
 // Fishing's
 enum : uint32_t {
+    ANIM_FISH_CATCH = 0x2C00,      // link_fishing_fish_catch: holding the fish up
+    ANIM_FISH_CATCH_END = 0x2C08,  // link_fishing_fish_catch_end: arms down again
     ANIM_FISH_REEL_DOWN = 0x2C10,  // link_fishing_reel_down
     ANIM_FISH_REEL_LEFT = 0x2C18,  // link_fishing_reel_left
     ANIM_FISH_REEL_RIGHT = 0x2C20, // link_fishing_reel_right
@@ -754,6 +757,11 @@ struct Animator {
     s32 state = 0;
     bool wasRiding = false;
     bool mounting = false;
+    // Link's own facing while the player faces Kazooie's way (see PlayAsLink_draw)
+    bool kazooieFacing = false;
+    bool facingHeld = false;
+    float facing = 0.0f;
+    float facingEntryYaw = 0.0f;
     Pose morphFrom = {};
     float morph = 1.0f; // 1 once the blend from the previous animation is done
     Pose last = {};
@@ -995,7 +1003,8 @@ struct DrawState {
     int next;
     Gfx** gfx;
     Gear gear;
-    MtxF leftHand; // the left hand's matrix, for the fishing rod
+    MtxF leftHand;  // the left hand's matrix, for the fishing rod
+    MtxF rightHand; // and the right's, for a fish held up
 };
 
 // The display list of a limb, with the hands and back swapped for the gear Link is showing
@@ -1045,6 +1054,8 @@ void DrawLimb(DrawState& state, int index, const MtxF& parent) {
     TranslateRotateZYX(&m, translation, state.pose->joints[index + 1]);
     if (index == kLeftHandLimb) {
         state.leftHand = m;
+    } else if (index == kRightHandLimb) {
+        state.rightHand = m;
     }
 
     Gfx* list = LimbList(state, index);
@@ -1242,7 +1253,13 @@ void PlayAsLink_draw(Gfx** gfx, Mtx** mtx, const MtxF* modelMatrix, s32 kazooieF
     // The rod is out: Link's body is the fishing code's to pose
     const PlayAsLinkFishing::LinkPose fishPose =
         model->fishing != nullptr ? PlayAsLinkFishing::GetLinkPose(*model->fishing) : PlayAsLinkFishing::LinkPose{};
-    if (fishPose.active && !riding) {
+    if (fishPose.active && !riding && fishPose.catching != PlayAsLinkFishing::LinkPose::None) {
+        choice = { .header = fishPose.catching == PlayAsLinkFishing::LinkPose::CatchHold ? ANIM_FISH_CATCH
+                                                                                         : ANIM_FISH_CATCH_END,
+                   .loop = false,
+                   .speed = 1.0f,
+                   .forcedFrame = fishPose.catchFrame };
+    } else if (fishPose.active && !riding) {
         choice = { .header = fishPose.throwing ? ANIM_FISH_THROW : ANIM_FISH_WAIT,
                    .loop = !fishPose.throwing,
                    .speed = 1.0f,
@@ -1286,19 +1303,48 @@ void PlayAsLink_draw(Gfx** gfx, Mtx** mtx, const MtxF* modelMatrix, s32 kazooieF
     Mtx* matrices = *mtx;
     *mtx += model->matrixCount;
 
-    // Banjo's matrix scaled down to Link's size. In the Talon Trot and the wading boots Banjo's model is turned to
-    // face Kazooie's way (backwards); Link and Epona face the way the player goes.
+    // Banjo's matrix scaled down to Link's size. In the Talon Trot and the wading boots the player faces Kazooie's
+    // way and Banjo's model is turned around (to yaw + 180). Starting either, BK turns the player around too, so
+    // Banjo still looks where he did: Link and Epona keep looking there until the player moves, then turn to face
+    // where he goes.
     MtxF base = *modelMatrix;
     if (kazooieFacing) {
-        for (int col = 0; col < 4; col++) {
-            base.mf[0][col] = -base.mf[0][col];
-            base.mf[2][col] = -base.mf[2][col];
+        const float yaw = yaw_get();
+        if (!sAnimator.kazooieFacing) {
+            sAnimator.facing = yaw + 180.0f;
+            sAnimator.facingEntryYaw = yaw;
+            sAnimator.facingHeld = true;
+        }
+        if (sAnimator.facingHeld &&
+            (baphysics_get_horizontal_velocity() > 10.0f || std::fabs(yaw - sAnimator.facingEntryYaw) > 2.0f)) {
+            sAnimator.facingHeld = false;
+        }
+        const float target = sAnimator.facingHeld ? sAnimator.facingEntryYaw + 180.0f : yaw;
+        // Turn the short way round, at most two turns a second
+        const float turn = std::remainder(target - sAnimator.facing, 360.0f);
+        const float maxTurn = 720.0f * std::clamp(time_getDelta(), 0.0f, 0.1f);
+        sAnimator.facing += std::clamp(turn, -maxTurn, maxTurn);
+        // Rotate from Banjo's model yaw to Link's facing, as mlMtxRotYaw does
+        const float delta = (sAnimator.facing - (yaw + 180.0f)) * (float)M_PI / 180.0f;
+        const float sin = std::sin(delta);
+        const float cos = std::cos(delta);
+        for (int col = 0; col < 3; col++) {
+            const float x = base.mf[0][col];
+            const float z = base.mf[2][col];
+            base.mf[0][col] = x * cos - z * sin;
+            base.mf[2][col] = x * sin + z * cos;
         }
     }
+    sAnimator.kazooieFacing = kazooieFacing;
     for (int row = 0; row < 3; row++) {
         for (int col = 0; col < 4; col++) {
             base.mf[row][col] *= kLinkScale;
         }
+    }
+
+    // A hooked fish pulls him forward or back
+    if (fishPose.active && !riding && fishPose.tilt != 0.0f) {
+        PlayAsLinkUtil::MtxRotateX(base, fishPose.tilt);
     }
 
     // Riding, Epona is drawn with Banjo's matrix and Link sits where OoT seats him on her saddle
@@ -1328,10 +1374,10 @@ void PlayAsLink_draw(Gfx** gfx, Mtx** mtx, const MtxF* modelMatrix, s32 kazooieF
     *(*gfx)++ = MakeGfx(0xD7000002, 0xFFFFFFFF); // G_TEXTURE: on, full scale
     // G_GEOMETRYMODE: G_ZBUFFER | G_SHADE | G_CULL_BACK | G_LIGHTING | G_SHADING_SMOOTH
     *(*gfx)++ = MakeGfx(0xD9000000, 0x00000001 | 0x00000004 | 0x00000400 | 0x00020000 | 0x00200000);
-    DrawState state = { model, &pose, matrices, 0, gfx, choice.gear, {} };
+    DrawState state = { model, &pose, matrices, 0, gfx, choice.gear, {}, {} };
     DrawLimb(state, 0, base);
     if (model->fishing != nullptr) {
-        PlayAsLinkFishing::Draw(*model->fishing, gfx, mtx, state.leftHand);
+        PlayAsLinkFishing::Draw(*model->fishing, gfx, mtx, state.leftHand, state.rightHand);
     }
     *(*gfx)++ = MakeGfx(((uintptr_t)0xDD << 24) | ucode_f3dex, 0);
 
