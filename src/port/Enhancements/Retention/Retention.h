@@ -26,6 +26,10 @@ void port_noteRetention_getSizeAndPtr(int32_t* size, uint8_t** addr);
 // overwrites the bitfield wholesale (team-state sync).
 void port_noteRetention_requestReseed(void);
 
+// Throws one of the current map's uncollected notes out from `from` with `velocity` (a reward that pops out of the
+// ground). It stays the same note, so the level's total can't grow. Returns 0 if there was none to throw.
+int32_t port_noteRetention_throwLiveNote(const float from[3], const float velocity[3]);
+
 void port_noteRetention_applyRemoteCollect(int32_t mapId, int32_t noteIndex, int32_t sameMap);
 
 // Record + broadcast a local note pickup (marker is ActorMarker*, void* to avoid engine types).

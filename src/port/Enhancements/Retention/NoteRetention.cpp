@@ -30,6 +30,8 @@ extern "C" {
 
 extern f32 gBundle_yaw;
 extern ActorInfo sumusicNote;
+extern BundleInfo gBundle_array[];
+f32* bundle_getVelocity(Actor* actor);
 extern f32 itemPrintValues[0x2C];
 }
 
@@ -223,6 +225,47 @@ extern "C" void port_noteRetention_applyRemoteCollect(int32_t mapId, int32_t not
             }
         }
     }
+}
+
+// Play as Link's fishing rewards: one of this map's own uncollected notes leaves where it lies and is thrown from
+// `from` with `velocity`, as if it had popped out of a broken crate. It is still that same note (it keeps its
+// identity), so picking it up counts it once, and nothing was added to the level's 100. Returns whether there was
+// a note to throw.
+extern "C" int32_t port_noteRetention_throwLiveNote(const f32 from[3], const f32 velocity[3]) {
+    if (!systemActive()) {
+        return 0;
+    }
+    Actor* best = nullptr;
+    f32 bestDistance = 0.0f;
+    for (auto& [key, marker] : activeNoteSet) {
+        if (marker == nullptr || !marker->unk3E_0) {
+            continue;
+        }
+        Actor* actor = marker_getActor(marker);
+        if (actor == nullptr || actor->despawn_flag || actor->is_bundle) {
+            continue;
+        }
+        const f32 dx = actor->position[0] - from[0];
+        const f32 dy = actor->position[1] - from[1];
+        const f32 dz = actor->position[2] - from[2];
+        const f32 distance = dx * dx + dy * dy + dz * dz;
+        if (best == nullptr || distance < bestDistance) {
+            best = actor;
+            bestDistance = distance;
+        }
+    }
+    if (best == nullptr) {
+        return 0;
+    }
+    best->position[0] = from[0];
+    best->position[1] = from[1];
+    best->position[2] = from[2];
+    ApplyBundleActorPhysics(best, BUNDLE_13__MUSIC_NOTE, &gBundle_array[BUNDLE_13__MUSIC_NOTE], 0.0f);
+    f32* thrown = bundle_getVelocity(best);
+    thrown[0] = velocity[0];
+    thrown[1] = velocity[1];
+    thrown[2] = velocity[2];
+    return 1;
 }
 
 // Called from gsworld_load before cube parsing; fires on every re-parse (map load, intra-

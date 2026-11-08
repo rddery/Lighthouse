@@ -6,6 +6,7 @@
 #include "port/Enhancements/Camera/FreeLookCamera.h"
 #include "port/Controller/ModernCamera.h"
 #include "port/Enhancements/Gameplay/BeakBombAiming.h"
+#include "port/Enhancements/Cosmetics/PlayAsLinkFishingCamera.h"
 
 
 extern BKCollisionTriangle *func_80245314(f32[3], f32[3], f32, f32, s32);
@@ -393,6 +394,10 @@ void ncDynamicCamera_update(void){
 
         case BEAK_BOMB_AIM_CAM_STATE: // [port] Beak Bomb Aiming's view
             port_beakBombAimCamera_update();
+            break;
+
+        case PLAY_AS_LINK_FISHING_CAM_STATE: // [port] Play as Link's fishing camera
+            port_playAsLinkFishingCamera_update();
             break;
     }//// L802BD064
     ml_vec3f_copy(position, cameraPosition);
