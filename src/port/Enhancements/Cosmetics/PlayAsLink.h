@@ -41,8 +41,9 @@ s32 PlayAsLink_shouldDraw(s32 modelId);
 // egg and beak positions, the marker's visibility).
 Gfx* PlayAsLink_getScratchGfx(void);
 
-// Draws Link with the model matrix Banjo was just drawn with.
-void PlayAsLink_draw(Gfx** gfx, Mtx** mtx, const MtxF* modelMatrix);
+// Draws Link with the model matrix Banjo was just drawn with. kazooieFacing: Banjo's model is turned to face
+// Kazooie's way (the Talon Trot and the wading boots).
+void PlayAsLink_draw(Gfx** gfx, Mtx** mtx, const MtxF* modelMatrix, s32 kazooieFacing);
 
 #ifdef __cplusplus
 }
