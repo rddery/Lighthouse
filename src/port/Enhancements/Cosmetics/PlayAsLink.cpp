@@ -484,6 +484,10 @@ struct AnimChoice {
     // Holds the root at its first frame's height: for animations that move Link with their root, where Banjo
     // already moves himself
     bool holdRootHeight = false;
+    // Keeps the root over Banjo's origin: for animations whose root travels sideways (the crawl's drop into a hole)
+    bool centerRoot = false;
+    // Starts again when a new move picks it while it's already playing (the Feathery Flap's leap after the jump's)
+    bool restartOnNewMove = false;
 };
 
 // gameplay_keep offsets of the animations used
@@ -502,7 +506,7 @@ enum : uint32_t {
     ANIM_JUMP_SLASH = 0x2A48,  // link_fighter_jump_kiru
     ANIM_GUARD = 0x2ED0,       // link_normal_defense_wait: shield raised in front
     ANIM_THROW = 0x31C8,       // link_normal_throw_free
-    ANIM_FLY = 0x2C98,         // link_hook_fly_wait
+    ANIM_CRAWL = 0x2708,       // link_child_tunnel_start: Link drops onto his hands and knees
     ANIM_SWIM = 0x32F0,        // link_swimer_swim
     ANIM_SWIM_WAIT = 0x3328,   // link_swimer_swim_wait
     ANIM_SWIM_DEAD = 0x32F8,   // link_swimer_swim_dead
@@ -519,6 +523,7 @@ enum : uint32_t {
     ANIM_RIDE_TROT = 0x3358,   // link_uma_anim_slowrun
     ANIM_RIDE_GALLOP = 0x3338, // link_uma_anim_fastrun
     ANIM_RIDE_JUMP = 0x3348,   // link_uma_anim_jump100
+    ANIM_MOUNT = 0x3398,       // link_uma_left_up: Link climbs onto Epona from her left
 };
 
 // The Talon Trot is Link riding Epona: everything but leaving it
@@ -608,7 +613,7 @@ AnimChoice ChooseAnim(s32 state) {
             return { ANIM_FALL, true, 1.0f };
         // The Feathery Flap is a second jump: the leap plays again
         case BS_10_BFLAP:
-            return { ANIM_JUMP, false, 1.0f };
+            return { .header = ANIM_JUMP, .loop = false, .speed = 1.0f, .restartOnNewMove = true };
         // Rat-a-tat Rap pecks about every 0.2 s: one 10-frame jump slash takes 0.33 s at normal speed
         case BS_11_BPECK:
             return { ANIM_JUMP_SLASH, true, 1.3f, Gear::Sword };
@@ -629,12 +634,14 @@ AnimChoice ChooseAnim(s32 state) {
         case BS_A_EGG_ASS:
         case BS_5B_CARRY_THROW:
             return { ANIM_THROW, false, 1.5f };
+        // Flying, Link takes the crawling stance OoT holds in crawlspaces: the drop into it plays quickly, then
+        // its last frame holds
         case BS_23_FLY_ENTER:
         case BS_24_FLY:
         case BS_2A_BOMB:
         case BS_18_FLY_KNOCKBACK:
         case BS_91_FLY_OW:
-            return { ANIM_FLY, true, 1.0f };
+            return { .header = ANIM_CRAWL, .loop = false, .speed = 3.0f, .centerRoot = true };
         case BS_2E_SWIM:
         case BS_2C_DIVE_B:
         case BS_39_DIVE_A:
@@ -714,6 +721,8 @@ struct Animator {
     uint32_t upperHeader = 0;
     float upperFrame = 0.0f;
     s32 state = 0;
+    bool wasRiding = false;
+    bool mounting = false;
     Pose morphFrom = {};
     float morph = 1.0f; // 1 once the blend from the previous animation is done
     Pose last = {};
@@ -777,9 +786,8 @@ bool SampleCycle(const LinkModel& model, uint32_t first, uint32_t second, float&
 void UpdatePose(LinkModel& model, Pose& pose, const AnimChoice& choice, s32 state) {
     const float dt = std::clamp(time_getDelta(), 0.0f, 0.1f);
 
-    // A new animation starts from its first frame, and so does a one-shot one when a new move reuses it (the
-    // Feathery Flap's leap after the jump's)
-    if (choice.header != sAnimator.header || (!choice.loop && state != sAnimator.state)) {
+    // A new animation starts from its first frame, and so does one a new move asks to restart
+    if (choice.header != sAnimator.header || (choice.restartOnNewMove && state != sAnimator.state)) {
         if (sAnimator.hasLast) {
             sAnimator.morphFrom = sAnimator.last;
             sAnimator.morph = 0.0f;
@@ -801,6 +809,10 @@ void UpdatePose(LinkModel& model, Pose& pose, const AnimChoice& choice, s32 stat
     }
     if (choice.holdRootHeight) {
         pose.joints[0][1] = (int16_t)Be16(model.FrameData(model.GetAnim(choice.header), 0) + 2);
+    }
+    if (choice.centerRoot) {
+        pose.joints[0][0] = 0;
+        pose.joints[0][2] = 0;
     }
     if (choice.upperHeader != 0) {
         if (choice.upperHeader != sAnimator.upperHeader) {
@@ -1159,7 +1171,21 @@ void PlayAsLink_draw(Gfx** gfx, Mtx** mtx, const MtxF* modelMatrix, s32 kazooieF
     const s32 playerState = bs_getState();
     const bool riding = model->epona != nullptr && IsRiding(playerState);
     const Ride ride = riding ? ChooseRide(playerState) : Ride{};
-    const AnimChoice choice = riding ? ride.link : ChooseAnim(playerState);
+    AnimChoice choice = riding ? ride.link : ChooseAnim(playerState);
+
+    // Starting the Talon Trot, Link climbs onto Epona; the mount plays out even if Banjo sets off straight away
+    if (riding && !sAnimator.wasRiding) {
+        sAnimator.mounting = true;
+    }
+    sAnimator.wasRiding = riding;
+    if (riding && sAnimator.mounting) {
+        const AnimHeader mount = model->GetAnim(ANIM_MOUNT);
+        if (sAnimator.header == ANIM_MOUNT && sAnimator.frame >= (float)mount.frameCount - 1.0f) {
+            sAnimator.mounting = false;
+        } else {
+            choice = { ANIM_MOUNT, false, 2.5f };
+        }
+    }
     Pose pose;
     UpdatePose(*model, pose, choice, playerState);
 
