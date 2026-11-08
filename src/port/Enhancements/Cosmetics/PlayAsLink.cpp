@@ -43,9 +43,18 @@ constexpr size_t kLinkBoySize = 0x37800;
 
 constexpr uint32_t kSkeleton = 0x377F4;                         // gLinkAdultSkel
 constexpr uint32_t kSheathWithShield = 0x20A78;                 // gLinkAdultBackHylianShieldSwordInSheathNearDL
+constexpr uint32_t kHandSword = 0x21F78;                        // gLinkAdultLeftHandHoldingMasterSwordNearDL
+constexpr uint32_t kHandShield = 0x22970;                       // gLinkAdultRightHandHoldingHylianShieldNearDL
+constexpr uint32_t kBackEmptySheath = 0x249D8;                  // gLinkAdultBackMasterSheathNearDL
+constexpr uint32_t kBackSwordSheathed = 0x23160;                // gLinkAdultBackMasterSwordInSheathNearDL
 constexpr uint32_t kEyeTextures[] = { 0x0000, 0x0800, 0x1000 }; // open, half, closed
 constexpr uint32_t kMouthClosedTexture = 0x4000;                // gLinkAdultMouthClosedTex
 constexpr int kSheathLimb = 19;
+constexpr int kLeftHandLimb = 15;
+constexpr int kRightHandLimb = 18;
+// Limbs 0 to 8 (root, waist and both legs) are the lower body; 9 to 20 (torso, head, arms, sheath) the upper body.
+// Joint 0 is the root translation, so joints below this index belong to the lower body.
+constexpr int kFirstUpperJoint = 10;
 constexpr int kJointCount = 22;                 // root translation and 21 limb rotations
 constexpr int kFrameSize = kJointCount * 6 + 2; // and the face (eyes and mouth) indices
 
@@ -176,6 +185,11 @@ public:
     std::vector<Limb> limbs;
     int matrixCount = 0;
     std::vector<Gfx*> limbLists; // converted display list of each limb, or nullptr
+    // Hand and back lists for the poses that show his equipment
+    Gfx* handSword = nullptr;
+    Gfx* handShield = nullptr;
+    Gfx* backEmptySheath = nullptr;
+    Gfx* backSwordSheathed = nullptr;
 
     bool Build(std::string& error);
     AnimHeader GetAnim(uint32_t headerOffset) const;
@@ -374,6 +388,14 @@ bool LinkModel::Build(std::string& error) {
         }
         limbLists.push_back(list);
     }
+    handSword = ConvertList(0x06000000 | kHandSword, 0);
+    handShield = ConvertList(0x06000000 | kHandShield, 0);
+    backEmptySheath = ConvertList(0x06000000 | kBackEmptySheath, 0);
+    backSwordSheathed = ConvertList(0x06000000 | kBackSwordSheathed, 0);
+    if (handSword == nullptr || handShield == nullptr || backEmptySheath == nullptr || backSwordSheathed == nullptr) {
+        error = "Link's equipment couldn't be converted";
+        return false;
+    }
     return true;
 }
 
@@ -425,42 +447,64 @@ LinkModel* GetModel() {
 
 // ---- Animation ----
 
+// What Link carries in his hands and on his back
+enum class Gear {
+    Sheathed, // sword and shield on his back
+    Sword,    // sword in the left hand, shield in the right, empty sheath
+    Guard,    // shield in the right hand, sword in its sheath
+};
+
 struct AnimChoice {
     uint32_t header; // offset in gameplay_keep
     bool loop;
     float speed;
+    Gear gear = Gear::Sheathed;
+    uint32_t upperHeader = 0; // when set, the upper body plays this animation and `header` only drives the lower body
 };
 
 // gameplay_keep offsets of the animations used
 enum : uint32_t {
-    ANIM_WAIT = 0x3240,      // link_normal_wait_free
-    ANIM_WALK = 0x3290,      // link_normal_walk_free
-    ANIM_RUN = 0x3140,       // link_normal_run_free
-    ANIM_JUMP = 0x3148,      // link_normal_run_jump
-    ANIM_FALL = 0x2F10,      // link_normal_fall
-    ANIM_FALL_UP = 0x2F20,   // link_normal_fall_up_free
-    ANIM_LANDING = 0x3028,   // link_normal_landing_free
-    ANIM_ROLL = 0x3038,      // link_normal_landing_roll_free
-    ANIM_SLASH = 0x2A80,     // link_fighter_normal_kiru
-    ANIM_THRUST = 0x2AA8,    // link_fighter_pierce_kiru
-    ANIM_CROUCH = 0x2ED8,    // link_normal_defense_wait_free
-    ANIM_THROW = 0x31C8,     // link_normal_throw_free
-    ANIM_FLY = 0x2C98,       // link_hook_fly_wait
-    ANIM_SWIM = 0x32F0,      // link_swimer_swim
-    ANIM_SWIM_WAIT = 0x3328, // link_swimer_swim_wait
-    ANIM_SWIM_DEAD = 0x32F8, // link_swimer_swim_dead
-    ANIM_CLIMB = 0x2E90,     // link_normal_climb_up
-    ANIM_HIT = 0x2F70,       // link_normal_front_hit
-    ANIM_DOWN = 0x2F58,      // link_normal_front_downA
-    ANIM_GET_ITEM = 0x2788,  // link_demo_get_itemB
-    ANIM_SLIP = 0x2EE0,      // link_normal_down_slope_slip
-    ANIM_BRAKE = 0x2DA0,     // link_normal_back_brake
-    ANIM_TALK = 0x31A8,      // link_normal_talk_free_wait
+    ANIM_WAIT = 0x3240,       // link_normal_wait_free
+    ANIM_WALK = 0x3290,       // link_normal_walk_free
+    ANIM_RUN = 0x3140,        // link_normal_run_free
+    ANIM_JUMP = 0x3148,       // link_normal_run_jump
+    ANIM_FALL = 0x2F10,       // link_normal_fall
+    ANIM_FALL_UP = 0x2F20,    // link_normal_fall_up_free
+    ANIM_LANDING = 0x3028,    // link_normal_landing_free
+    ANIM_ROLL = 0x3038,       // link_normal_landing_roll_free
+    ANIM_SLASH = 0x2A80,      // link_fighter_normal_kiru
+    ANIM_THRUST = 0x2AA8,     // link_fighter_pierce_kiru
+    ANIM_CROUCH = 0x2ED8,     // link_normal_defense_wait_free
+    ANIM_JUMP_SLASH = 0x2A48, // link_fighter_jump_kiru
+    ANIM_GUARD = 0x2ED0,      // link_normal_defense_wait: shield raised in front
+    ANIM_THROW = 0x31C8,      // link_normal_throw_free
+    ANIM_FLY = 0x2C98,        // link_hook_fly_wait
+    ANIM_SWIM = 0x32F0,       // link_swimer_swim
+    ANIM_SWIM_WAIT = 0x3328,  // link_swimer_swim_wait
+    ANIM_SWIM_DEAD = 0x32F8,  // link_swimer_swim_dead
+    ANIM_CLIMB = 0x2E90,      // link_normal_climb_up
+    ANIM_HIT = 0x2F70,        // link_normal_front_hit
+    ANIM_DOWN = 0x2F58,       // link_normal_front_downA
+    ANIM_GET_ITEM = 0x2788,   // link_demo_get_itemB
+    ANIM_SLIP = 0x2EE0,       // link_normal_down_slope_slip
+    ANIM_BRAKE = 0x2DA0,      // link_normal_back_brake
+    ANIM_TALK = 0x31A8,       // link_normal_talk_free_wait
 };
 
 AnimChoice ChooseAnim(s32 state) {
     const float speed = baphysics_get_horizontal_velocity();
     switch (state) {
+        // Wonderwing: shield up on the upper body while the legs follow the movement
+        case BS_1A_WONDERWING_ENTER:
+        case BS_1B_WONDERWING_IDLE:
+        case BS_1E_WONDERWING_EXIT:
+        case BS_A4_WONDERWING_DRONE:
+        case BS_A5_WONDERWING_UNKA5:
+            return { ANIM_WAIT, true, 1.0f, Gear::Guard, ANIM_GUARD };
+        case BS_1C_WONDERWING_WALK:
+            return { ANIM_RUN, true, std::clamp(speed / 350.0f, 0.6f, 2.0f), Gear::Guard, ANIM_GUARD };
+        case BS_1D_WONDERWING_JUMP:
+            return { ANIM_JUMP, false, 1.0f, Gear::Guard, ANIM_GUARD };
         case BS_2_WALK_SLOW:
         case BS_3_WALK:
         case BS_1F_WALK_CREEP:
@@ -470,13 +514,11 @@ AnimChoice ChooseAnim(s32 state) {
             return { ANIM_WALK, true, std::clamp(speed / 120.0f, 0.5f, 2.0f) };
         case BS_4_WALK_FAST:
         case BS_16_BTROT_WALK:
-        case BS_1C_WONDERWING_WALK:
             return { ANIM_RUN, true, std::clamp(speed / 350.0f, 0.6f, 2.0f) };
         case BS_5_JUMP:
         case BS_8_BTROT_JUMP:
         case BS_12_BFLIP:
         case BS_22_BSHOCK_JUMP:
-        case BS_1D_WONDERWING_JUMP:
         case BS_28_LONGLEG_JUMP:
             return { ANIM_JUMP, false, 1.0f };
         case BS_2F_FALL:
@@ -485,17 +527,20 @@ AnimChoice ChooseAnim(s32 state) {
         case BS_F_BBUSTER:
             return { ANIM_FALL, true, 1.0f };
         case BS_10_BFLAP:
-        case BS_11_BPECK:
             return { ANIM_FALL_UP, true, 1.0f };
+        // Rat-a-tat Rap pecks about every 0.2 s: one 10-frame jump slash takes 0.33 s at normal speed
+        case BS_11_BPECK:
+            return { ANIM_JUMP_SLASH, true, 1.3f, Gear::Sword };
         case BS_20_LANDING:
             return { ANIM_LANDING, false, 1.0f };
         case BS_31_ROLL:
             return { ANIM_ROLL, false, 1.5f };
-        // OoT's slashes are only a few frames long: slowed down, they last as long as Banjo's attacks
+        // OoT's slashes are only a few frames long. Banjo's claw swipe is three swipes in about 0.7 s, so the slash
+        // repeats at that rhythm; the barge is one long dash, so the thrust plays once and holds its last frame
         case BS_6_CLAW:
-            return { ANIM_SLASH, false, 0.4f };
+            return { ANIM_SLASH, true, 0.7f, Gear::Sword };
         case BS_13_BBARGE:
-            return { ANIM_THRUST, false, 0.4f };
+            return { ANIM_THRUST, false, 0.35f, Gear::Sword };
         case BS_7_CROUCH:
         case BS_21_BSHOCK_CHARGE:
             return { ANIM_CROUCH, true, 1.0f };
@@ -579,6 +624,8 @@ void BlendPose(const Pose& from, const Pose& to, float t, Pose& out) {
 struct Animator {
     uint32_t header = 0;
     float frame = 0.0f;
+    uint32_t upperHeader = 0;
+    float upperFrame = 0.0f;
     Pose morphFrom = {};
     float morph = 1.0f; // 1 once the blend from the previous animation is done
     Pose last = {};
@@ -602,8 +649,28 @@ void InstallModel(std::unique_ptr<LinkModel> model) {
     sAvailable = true;
 }
 
-void UpdatePose(LinkModel& model, Pose& pose) {
-    const AnimChoice choice = ChooseAnim(bs_getState());
+// The pose of an animation at a frame, interpolated between the two frames around it. Looping animations wrap
+// around, others hold their last frame; `frame` is brought into range.
+bool SamplePose(const LinkModel& model, uint32_t header, float& frame, bool loop, Pose& pose) {
+    const AnimHeader anim = model.GetAnim(header);
+    if (anim.frameCount == 0) {
+        return false;
+    }
+    if (loop) {
+        frame = std::fmod(frame, (float)anim.frameCount);
+    } else {
+        frame = std::min(frame, (float)(anim.frameCount - 1));
+    }
+    const uint32_t frame0 = (uint32_t)frame;
+    const uint32_t frame1 = loop ? (frame0 + 1) % anim.frameCount : std::min(frame0 + 1, anim.frameCount - 1);
+    Pose a, b;
+    ReadPose(model.FrameData(anim, frame0), a);
+    ReadPose(model.FrameData(anim, frame1), b);
+    BlendPose(a, b, frame - (float)frame0, pose);
+    return true;
+}
+
+void UpdatePose(LinkModel& model, Pose& pose, const AnimChoice& choice) {
     const float dt = std::clamp(time_getDelta(), 0.0f, 0.1f);
 
     if (choice.header != sAnimator.header) {
@@ -618,24 +685,25 @@ void UpdatePose(LinkModel& model, Pose& pose) {
         sAnimator.frame += dt * 30.0f * choice.speed;
     }
 
-    const AnimHeader anim = model.GetAnim(choice.header);
-    if (anim.frameCount == 0) {
+    if (!SamplePose(model, choice.header, sAnimator.frame, choice.loop, pose)) {
         std::memset(&pose, 0, sizeof(pose));
         return;
     }
-    const float last = (float)(anim.frameCount - 1);
-    if (choice.loop) {
-        sAnimator.frame = std::fmod(sAnimator.frame, (float)anim.frameCount);
-    } else if (sAnimator.frame > last) {
-        sAnimator.frame = last;
+    if (choice.upperHeader != 0) {
+        if (choice.upperHeader != sAnimator.upperHeader) {
+            sAnimator.upperHeader = choice.upperHeader;
+            sAnimator.upperFrame = 0.0f;
+        } else {
+            sAnimator.upperFrame += dt * 30.0f;
+        }
+        Pose upper;
+        if (SamplePose(model, choice.upperHeader, sAnimator.upperFrame, true, upper)) {
+            std::memcpy(&pose.joints[kFirstUpperJoint], &upper.joints[kFirstUpperJoint],
+                        sizeof(pose.joints[0]) * (kJointCount - kFirstUpperJoint));
+        }
+    } else {
+        sAnimator.upperHeader = 0;
     }
-
-    const uint32_t frame0 = (uint32_t)sAnimator.frame;
-    const uint32_t frame1 = choice.loop ? (frame0 + 1) % anim.frameCount : std::min(frame0 + 1, anim.frameCount - 1);
-    Pose a, b;
-    ReadPose(model.FrameData(anim, frame0), a);
-    ReadPose(model.FrameData(anim, frame1), b);
-    BlendPose(a, b, sAnimator.frame - (float)frame0, pose);
 
     if (sAnimator.morph < 1.0f) {
         sAnimator.morph = std::min(1.0f, sAnimator.morph + dt / 0.12f);
@@ -744,7 +812,34 @@ struct DrawState {
     Mtx* matrices;
     int next;
     Gfx** gfx;
+    Gear gear;
 };
+
+// The display list of a limb, with the hands and back swapped for the gear Link is showing
+Gfx* LimbList(const DrawState& state, int index) {
+    const LinkModel& model = *state.model;
+    switch (state.gear) {
+        case Gear::Sword:
+            if (index == kLeftHandLimb) {
+                return model.handSword;
+            } else if (index == kRightHandLimb) {
+                return model.handShield;
+            } else if (index == kSheathLimb) {
+                return model.backEmptySheath;
+            }
+            break;
+        case Gear::Guard:
+            if (index == kRightHandLimb) {
+                return model.handShield;
+            } else if (index == kSheathLimb) {
+                return model.backSwordSheathed;
+            }
+            break;
+        case Gear::Sheathed:
+            break;
+    }
+    return model.limbLists[index];
+}
 
 constexpr uintptr_t kF3dex2Mtx = 0xDA380003; // G_MTX: G_MTX_MODELVIEW | G_MTX_LOAD | G_MTX_NOPUSH
 constexpr uintptr_t kF3dex2Dl = 0xDE000000;  // G_DL, pushed
@@ -766,7 +861,7 @@ void DrawLimb(DrawState& state, int index, const MtxF& parent) {
     }
     TranslateRotateZYX(&m, translation, state.pose->joints[index + 1]);
 
-    Gfx* list = state.model->limbLists[index];
+    Gfx* list = LimbList(state, index);
     if (list != nullptr && state.next < state.model->matrixCount) {
         Mtx* mtx = &state.matrices[state.next++];
         core1_7F60_guMtxF2L(m.mf, mtx);
@@ -943,7 +1038,8 @@ void PlayAsLink_draw(Gfx** gfx, Mtx** mtx, const MtxF* modelMatrix) {
     }
 
     Pose pose;
-    UpdatePose(*model, pose);
+    const AnimChoice choice = ChooseAnim(bs_getState());
+    UpdatePose(*model, pose, choice);
 
     // Eyes blink every few seconds unless the animation picks them
     sAnimator.blinkTimer -= std::clamp(time_getDelta(), 0.0f, 0.1f);
@@ -991,7 +1087,7 @@ void PlayAsLink_draw(Gfx** gfx, Mtx** mtx, const MtxF* modelMatrix) {
     *(*gfx)++ = MakeGfx(0xD7000002, 0xFFFFFFFF); // G_TEXTURE: on, full scale
     // G_GEOMETRYMODE: G_ZBUFFER | G_SHADE | G_CULL_BACK | G_LIGHTING | G_SHADING_SMOOTH
     *(*gfx)++ = MakeGfx(0xD9000000, 0x00000001 | 0x00000004 | 0x00000400 | 0x00020000 | 0x00200000);
-    DrawState state = { model, &pose, matrices, 0, gfx };
+    DrawState state = { model, &pose, matrices, 0, gfx, choice.gear };
     DrawLimb(state, 0, base);
     *(*gfx)++ = MakeGfx(((uintptr_t)0xDD << 24) | ucode_f3dex, 0);
 
