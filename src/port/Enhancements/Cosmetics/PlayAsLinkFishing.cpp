@@ -1,6 +1,8 @@
 #include "PlayAsLinkFishing.h"
 #include "PlayAsLink.h"
 #include "PlayAsLinkFish.h"
+#include "PlayAsLinkFishingCamera.h"
+#include "PlayAsLinkFishingRewards.h"
 #include "PlayAsLinkUtil.h"
 
 #include <algorithm>
@@ -640,6 +642,7 @@ void Release(PlayAsLinkFishing::Fishing::Data& data) {
     if (s.phase != Phase::Off) {
         LockBanjo(false);
     }
+    PlayAsLinkFishingCamera::End();
     if (data.school != nullptr) {
         PlayAsLinkFish::Clear(*data.school);
     }
@@ -857,6 +860,7 @@ void UpdateLanded(State& s, const Input& in, float dt) {
 constexpr float kCatchHoldSeconds = 3.4f;
 constexpr float kCatchEndSeconds = 0.7f; // the arms coming down
 constexpr float kCatchTextSeconds = 0.5f;
+constexpr float kCameraAimAhead = 450.0f; // where the camera looks while the lure is still in Link's hand
 
 // OoT's weight for a fish (z_fishing.c: SQ(length) * 0.0036 + 0.5); a Hylian Loach counts twice its length
 int FishWeight(float length, bool loach) {
@@ -869,6 +873,26 @@ void AnnounceCatch(const State& s) {
     Notification::Emit({ .prefix = s.catchLoach ? "Caught a Hylian Loach!" : "Caught a fish!",
                          .prefixColor = ImVec4(0.4f, 1.0f, 0.5f, 1.0f),
                          .message = "It weighs " + std::to_string(weight) + (weight == 1 ? " pound." : " pounds."),
+                         .messageColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f),
+                         .remainingTime = 6.0f });
+}
+
+// The pickups that popped out of the catch
+void AnnounceRewards(const PlayAsLinkFishingRewards::Given& given) {
+    std::string message;
+    if (given.eggs > 0) {
+        message = std::to_string(given.eggs) + (given.eggs == 1 ? " egg" : " eggs");
+    }
+    if (given.notes > 0) {
+        message +=
+            (message.empty() ? "" : " and ") + std::to_string(given.notes) + (given.notes == 1 ? " note" : " notes");
+    }
+    if (message.empty()) {
+        return;
+    }
+    Notification::Emit({ .prefix = "Reward!",
+                         .prefixColor = ImVec4(1.0f, 0.85f, 0.3f, 1.0f),
+                         .message = message + " popped out.",
                          .messageColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f),
                          .remainingTime = 6.0f });
 }
@@ -992,6 +1016,30 @@ void OnFish(PlayAsLinkFishing::Fishing::Data& data, State& s, const PlayAsLinkFi
     }
 }
 
+// What the camera frames: the water Link casts at (the lure, or ahead of him while it is in his hand), the fish
+// he fights, then him holding it up
+void UpdateCamera(const State& s) {
+    PlayAsLinkFishingCamera::Request request;
+    PlayerPosition(request.link);
+    request.yaw = yaw_get();
+    const float yaw = request.yaw * kPi / 180.0f;
+    if (s.phase == Phase::Catching) {
+        request.view = PlayAsLinkFishingCamera::View::Catch;
+    } else if (s.phase == Phase::Hooked) {
+        request.view = PlayAsLinkFishingCamera::View::Fight;
+        std::memcpy(request.aim, s.mouth, sizeof(request.aim));
+    } else if (s.phase == Phase::Flying || s.phase == Phase::Landed) {
+        request.view = PlayAsLinkFishingCamera::View::Rod;
+        std::memcpy(request.aim, s.lure, sizeof(request.aim));
+    } else {
+        request.view = PlayAsLinkFishingCamera::View::Rod;
+        request.aim[0] = request.link[0] + std::sin(yaw) * kCameraAimAhead;
+        request.aim[1] = request.link[1];
+        request.aim[2] = request.link[2] + std::cos(yaw) * kCameraAimAhead;
+    }
+    PlayAsLinkFishingCamera::Set(request);
+}
+
 } // namespace
 
 namespace PlayAsLinkFishing {
@@ -1044,6 +1092,7 @@ void Update(Fishing& fishing, float dt) {
             s.prevStickX = in.stickX;
             s.prevStickY = in.stickY;
             LockBanjo(true);
+            PlayAsLinkFishingCamera::Begin();
             // The fish are in the water in front of Link from the moment the rod comes out
             if (data.school != nullptr) {
                 float player[3];
@@ -1167,6 +1216,10 @@ void Update(Fishing& fishing, float dt) {
             if (!s.catchTextShown && s.catchTime >= kCatchTextSeconds) {
                 s.catchTextShown = true;
                 AnnounceCatch(s);
+                float player[3];
+                PlayerPosition(player);
+                AnnounceRewards(PlayAsLinkFishingRewards::Give(FishWeight(s.catchLength, s.catchLoach), s.catchLoach,
+                                                               player, yaw_get()));
             }
             if (!s.catchReleased && s.catchTime >= kCatchHoldSeconds) {
                 // Back in the water
@@ -1204,6 +1257,7 @@ void Update(Fishing& fishing, float dt) {
     }
     s.prevStickX = in.stickX;
     s.prevStickY = in.stickY;
+    UpdateCamera(s);
 
     // The throw plays out after the cast, then Link waits again
     if (s.throwPlaying && s.phase != Phase::Casting && s.phase != Phase::Charging) {
