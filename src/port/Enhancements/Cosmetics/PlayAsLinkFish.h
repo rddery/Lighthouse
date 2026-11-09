@@ -60,6 +60,7 @@ struct Result {
     bool bit = false;     // a fish took the lure
     bool hookSet = false; // the player set the hook
     bool gotAway = false; // the fish let go or broke off
+    bool snapped = false; // ... because the line broke under too much tension (gotAway is set too)
     bool missed = false;  // ... because the hook wasn't set in time
     bool caught = false;  // the fish was reeled in and is in the player's hands now
 };
@@ -79,6 +80,9 @@ struct Fight {
     bool loach = false;
     float faceYaw = 0.0f; // degrees: the way the player should look
     bool running = false;
+    // How close the line is to snapping, 0 to 1: it builds while the player reels against a fish that is pulling
+    // away, and eases off as soon as the reel rests or the fish tires
+    float tension = 0.0f;
 };
 
 class School {

@@ -3,6 +3,7 @@
 #include "port/Network/Anchor/Anchor.h"
 #include "port/FrameHost.h"
 #include "port/Enhancements/Cosmetics/PlayAsLink.h"
+#include "port/Enhancements/Cosmetics/PlayAsLinkFishingCatch.h"
 
 #include "functions.h"
 extern "C" {
@@ -802,6 +803,22 @@ void LighthouseMenu::AddMenuEnhancements() {
         } else {
             ImGui::TextWrapped("Load an Ocarina of Time (USA 1.0) ROM to use this.");
         }
+    });
+
+    AddWidget(path, "Play as Link Fishing Records", WIDGET_CUSTOM).HideInSearch(true).CustomFunction([](WidgetInfo&) {
+        const auto records = PlayAsLinkFishingCatch::GetRecords();
+        ImGui::Spacing();
+        ImGui::TextUnformatted("Fishing records (this file)");
+        if (!records.valid) {
+            ImGui::TextWrapped("Start or load a file to see its records.");
+            return;
+        }
+        auto pounds = [](int weight) {
+            return weight > 0 ? std::to_string(weight) + (weight == 1 ? " pound" : " pounds") : std::string("none yet");
+        };
+        ImGui::Text("Biggest bass: %s", pounds(records.bestBass).c_str());
+        ImGui::Text("Biggest Hylian Loach: %s", pounds(records.bestLoach).c_str());
+        ImGui::Text("Fish caught: %d", records.caught);
     });
 
     path.sidebarName = "Gameplay Timer";

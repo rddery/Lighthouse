@@ -58,6 +58,17 @@ constexpr int kCellRadius = 9;      // cells, around the first place the lure co
 constexpr float kCatchDistance = 50.0f; // xz distance from the player at which a fish is landed
 constexpr float kBiteSlack = 20.0f;
 
+// Line tension. OoT's line never breaks, so this is the port's own rule, built from OoT's numbers: how hard a fish
+// pulls is how much of the reel it takes away (z_fishing.c's sRodReelingSpeed: 1.0 - length * 0.00899 while it
+// fights, none at all while it runs, 1.3 - ... once it tires; a Hylian Loach pulls 1.4 times as hard). Reeling
+// against that pull builds tension; resting the reel or a tired fish lets it ease off. Per 20 Hz tick, like the
+// rest of the fish.
+constexpr float kTensionLimit = 100.0f;
+constexpr float kTensionRise = 7.0f;     // at the full pull of the strongest fish
+constexpr float kTensionEase = 4.0f;     // how much it eases a tick when nothing pulls against the reel
+constexpr float kPullPerInch = 0.00899f; // OoT's: what the reel loses to a fish, per inch of its length
+constexpr float kStrongPull = 0.64f;     // the pull of a 71 inch fish, OoT's biggest
+
 // How many 20 Hz ticks the fish takes to be thrown back, and how high the arc goes
 constexpr int kTossTicks = 18;
 constexpr float kTossHeight = 40.0f;
@@ -284,6 +295,7 @@ struct PlayAsLinkFish::School::Data {
     int pullback = 100;      // sRodPullback
     int fightTime = 0;       // sFishFightTime
     float reelSpeed = 0.0f;  // sRodReelingSpeed
+    float tension = 0.0f;    // 0 to kTensionLimit
     int hitTimer = 0;        // sRodHitTimer
     float lineLength = 0.0f; // how far from the rod the fish can be (OoT units, xz)
     Fight fight;
@@ -1076,6 +1088,7 @@ void Data::TickFish(Fish& f) {
                 }
                 bitTimer = timer;
                 lineHooked = false;
+                tension = 0.0f;
                 pullback = 100;
                 fightTime = 0;
                 lineLength = std::sqrt(Sq(tip.x - f.position.x) + Sq(tip.z - f.position.z)) + kBiteSlack;
@@ -1105,6 +1118,7 @@ void Data::TickFish(Fish& f) {
                 hooked = f.index;
                 bitTimer = 30;
                 lineHooked = false;
+                tension = 0.0f;
                 pullback = 100;
                 fightTime = 0;
                 lineLength = std::sqrt(Sq(tip.x - f.position.x) + Sq(tip.z - f.position.z)) + kBiteSlack;
@@ -1265,8 +1279,10 @@ void Data::EndFight() {
     castState = 0;
     hooked = -1;
     lineHooked = false;
+    tension = 0.0f;
     bitTimer = 0;
     hitTimer = 0;
+    fight.tension = 0.0f;
     fight.active = false;
     fight.hooked = false;
     fight.caught = false;
@@ -1298,6 +1314,9 @@ void Data::FightTick(Fish& f) {
         }
     }
 
+    // How hard the fish pulls against the reel this tick (0 to 1): all of it while it runs, what the reel loses
+    // while it fights, none once it tires or is out of the water
+    float pull = 0.0f;
     if (f.position.y < f.surface) {
         const bool burst = f.timers[1] > 30;
         if (burst) {
@@ -1351,6 +1370,7 @@ void Data::FightTick(Fish& f) {
                 ApproachF(f.speed, 5.0f, 1.0f, 0.5f);
                 reelSpeed = f.loach ? 1.0f - (f.length * 0.00899f * 1.4f) : 1.0f - (f.length * 0.00899f);
             }
+            pull = std::clamp(1.0f - reelSpeed, 0.0f, 1.0f);
         } else {
             // Tiring: it turns toward the player when A is held, and the reel gains
             if ((f.timers[1] & 0xF) == 0 && input.a && (!(f.length >= 60.0f) || fightTime >= 2000)) {
@@ -1403,10 +1423,23 @@ void Data::FightTick(Fish& f) {
         pullback--;
     }
 
+    // Tension: a big fish pulls harder than a small one, so the same reeling strains the line more
+    if (lineHooked) {
+        const float strength = f.length * kPullPerInch * (f.loach ? 1.4f : 1.0f);
+        const float power = std::clamp(Sq(strength / kStrongPull), 0.0f, 1.5f);
+        if (input.a && pull > 0.0f) {
+            tension = std::min(kTensionLimit, tension + kTensionRise * pull * power);
+        } else {
+            tension = std::max(0.0f, tension - kTensionEase);
+        }
+    }
+    const bool snapped = lineHooked && tension >= kTensionLimit;
+
     const bool missed = bitTimer == 0 && !lineHooked;
-    if (fightTime >= 6000 || missed || pullback == 0 || ((ticks & 0x7F) == 0 && rng.One() < 0.05f)) {
+    if (snapped || fightTime >= 6000 || missed || pullback == 0 || ((ticks & 0x7F) == 0 && rng.One() < 0.05f)) {
         // It gets away: the line goes slack
         result.gotAway = true;
+        result.snapped = snapped;
         result.missed = missed;
         f.state = f.stateNext = kSwim;
         f.scaredLong = 10000;
@@ -1680,6 +1713,7 @@ Result Update(School& school, World& world, const Frame& frame) {
     fight.active = d.castState == 4 || d.castState == 5;
     fight.hooked = d.lineHooked;
     fight.hitTimer = d.hitTimer;
+    fight.tension = d.castState == 4 && d.lineHooked ? d.tension / kTensionLimit : 0.0f;
     if (d.hooked >= 0) {
         const Fish& f = d.fish[d.hooked];
         // Part way between ticks, like the fish is drawn

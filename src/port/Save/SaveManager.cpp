@@ -8,6 +8,7 @@
 #include "port/UI/cvar_prefixes.h"
 #include "port/UI/LighthouseModMenuWindow.h"
 #include "port/UI/Notification.h"
+#include <algorithm>
 #include <cstddef>
 #include <cstring>
 #include <fstream>
@@ -446,6 +447,13 @@ ordered_json Convert_SaveDataToJSON(SaveData* saveData, int32_t fileNum) {
     }
     ship["heardBrentildaHints"] = heardBrentildaHints;
 
+    // Play as Link's fishing records (all files)
+    ordered_json fishing = ordered_json::object();
+    fishing["bestBass"] = saveData->shipSaveData.fishingBestBass;
+    fishing["bestLoach"] = saveData->shipSaveData.fishingBestLoach;
+    fishing["caught"] = saveData->shipSaveData.fishingCaught;
+    ship["fishing"] = fishing;
+
     if (saveData->shipSaveData.fileType == FILE_TYPE_SAVE_RANDO) {
         Rando::Logic::GenerateSaveData(saveData);
         shipRando["seedId"] = saveData->shipSaveData.randoSaveData.seedId;
@@ -750,6 +758,17 @@ SaveData* Convert_JSONToSaveData(int32_t fileNum) {
                 saveData->shipSaveData.heardBrentildaHints |= 1u << i;
             }
         }
+    }
+
+    // Fishing records (all files): files saved before they existed have none
+    saveData->shipSaveData.fishingBestBass = 0;
+    saveData->shipSaveData.fishingBestLoach = 0;
+    saveData->shipSaveData.fishingCaught = 0;
+    if (j.contains("ship") && j["ship"].contains("fishing") && j["ship"]["fishing"].is_object()) {
+        const auto& fishing = j["ship"]["fishing"];
+        saveData->shipSaveData.fishingBestBass = (u16)std::clamp(fishing.value("bestBass", 0), 0, 0xFFFF);
+        saveData->shipSaveData.fishingBestLoach = (u16)std::clamp(fishing.value("bestLoach", 0), 0, 0xFFFF);
+        saveData->shipSaveData.fishingCaught = (u32)std::max<int64_t>(0, fishing.value("caught", (int64_t)0));
     }
 
     if (j["ship"]["fileType"].get<int>() == FILE_TYPE_SAVE_RANDO) {
