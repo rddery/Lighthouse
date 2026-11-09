@@ -58,6 +58,10 @@ typedef struct {
     JinjoRetentionSaveData jinjoRetention;
     ConsumableRetentionSaveData consumableRetention;
     u32 heardBrentildaHints;
+    // Play as Link's fishing records for this file: the heaviest catches, in pounds, and how many fish were landed
+    u16 fishingBestBass;
+    u16 fishingBestLoach;
+    u32 fishingCaught;
 } ShipSaveData;
 
 typedef struct{

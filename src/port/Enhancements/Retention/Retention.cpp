@@ -27,7 +27,8 @@ bool systemActive() {
 } // namespace retention
 
 static void RegisterRetentionSaving_Init() {
-    // bcopy's scratch-slot save buffer doesn't carry our bits (or Brentilda's heard hints); sync them in.
+    // bcopy's scratch-slot save buffer doesn't carry our bits (or Brentilda's heard hints, or the fishing records);
+    // sync them in.
     COND_HOOK(OnSaveFileSave, EVENT_PRIORITY_HIGH, true, [](IEvent* event) {
         OnSaveFileSave* ev = (OnSaveFileSave*)event;
         SaveData* buf = (SaveData*)ev->saveBuffer;
@@ -37,6 +38,9 @@ static void RegisterRetentionSaving_Init() {
             buf->shipSaveData.jinjoRetention = live->jinjoRetention;
             buf->shipSaveData.consumableRetention = live->consumableRetention;
             buf->shipSaveData.heardBrentildaHints = live->heardBrentildaHints;
+            buf->shipSaveData.fishingBestBass = live->fishingBestBass;
+            buf->shipSaveData.fishingBestLoach = live->fishingBestLoach;
+            buf->shipSaveData.fishingCaught = live->fishingCaught;
         }
     });
 }

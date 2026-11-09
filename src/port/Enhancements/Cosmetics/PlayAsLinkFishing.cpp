@@ -2,6 +2,7 @@
 #include "PlayAsLink.h"
 #include "PlayAsLinkFish.h"
 #include "PlayAsLinkFishingCamera.h"
+#include "PlayAsLinkFishingCatch.h"
 #include "PlayAsLinkFishingRewards.h"
 #include "PlayAsLinkUtil.h"
 
@@ -227,10 +228,22 @@ struct State {
     float wiggleSign = 1.0f;
     int wiggleLevel = 0; // 1 or 2 on the frame the lure is twitched, for the fish
 
+    // The line's strain from a fish that pulls away, 0 to 1 (snaps at 1)
+    float tension = 0.0f;
+    float shakeTime = 0.0f;    // runs while the rod strains, for its shudder
+    float creakTimer = 0.0f;   // until the line creaks again
+    bool strainWarned = false; // the player was told the line is straining, for this stretch of high tension
+
     // A fish on the lure
     float catchTime = 0.0f;
+    float releaseTime = 0.0f;   // when the fish was let go, in catchTime
     bool catchReleased = false; // the fish has been let go; Link's arms come down
+    bool catchCounted = false;  // the records and the rewards have been dealt with
     bool catchTextShown = false;
+    float catchBoxWait = 0.0f;      // how long the dialog box has been refused
+    bool catchBoxFallback = false;  // it never opened: the catch was announced with notifications
+    float catchFallbackTime = 0.0f; // when, in catchTime
+    PlayAsLinkFishingCatch::Catch catchInfo;
     float catchLength = 0.0f;
     bool catchLoach = false;
     float mouth[3] = {}; // where the fish's mouth was last, in the world
@@ -643,6 +656,7 @@ void Release(PlayAsLinkFishing::Fishing::Data& data) {
         LockBanjo(false);
     }
     PlayAsLinkFishingCamera::End();
+    PlayAsLinkFishingCatch::Abandon();
     if (data.school != nullptr) {
         PlayAsLinkFish::Clear(*data.school);
     }
@@ -856,11 +870,22 @@ void UpdateLanded(State& s, const Input& in, float dt) {
     }
 }
 
-// How long Link holds the fish up, in seconds, before it goes back (OoT waits for the player to read the text)
+// How long Link holds the fish up before the catch is announced
+constexpr float kCatchTextSeconds = 0.5f;
+// If the game won't open its dialog box for this long, the catch is announced with notifications instead, and Link
+// holds the fish up for kCatchHoldSeconds before it goes back
+constexpr float kCatchBoxGiveUpSeconds = 3.0f;
 constexpr float kCatchHoldSeconds = 3.4f;
 constexpr float kCatchEndSeconds = 0.7f; // the arms coming down
-constexpr float kCatchTextSeconds = 0.5f;
-constexpr float kCameraAimAhead = 450.0f; // where the camera looks while the lure is still in Link's hand
+
+// The strain on the line shows as the rod bending harder and shuddering, the line reddening, and a creak
+constexpr float kStrainBend = 0.6f;        // extra rod bend at the line's limit
+constexpr float kStrainShudder = 0.14f;    // how far the rod shakes at the limit, in the bend's units
+constexpr float kStrainBodyShake = 0.035f; // radians Link's body shakes at the limit
+constexpr float kCreakFrom = 0.45f;        // the line creaks from this much tension
+constexpr float kWarnFrom = 0.7f;          // the line is straining, for the player's benefit
+constexpr float kCreakSeconds = 0.5f;      // between creaks at the limit
+constexpr float kCameraAimAhead = 450.0f;  // where the camera looks while the lure is still in Link's hand
 
 // OoT's weight for a fish (z_fishing.c: SQ(length) * 0.0036 + 0.5); a Hylian Loach counts twice its length
 int FishWeight(float length, bool loach) {
@@ -868,33 +893,30 @@ int FishWeight(float length, bool loach) {
     return (int)((float)(counted * counted) * 0.0036f + 0.5f);
 }
 
-void AnnounceCatch(const State& s) {
-    const int weight = FishWeight(s.catchLength, s.catchLoach);
-    Notification::Emit({ .prefix = s.catchLoach ? "Caught a Hylian Loach!" : "Caught a fish!",
+// What the catch box says, as notifications: for when the game can't open its dialog box
+void AnnounceCatchFallback(const PlayAsLinkFishingCatch::Catch& caught) {
+    Notification::Emit({ .prefix = caught.loach ? "Caught a Hylian Loach!" : "Caught a fish!",
                          .prefixColor = ImVec4(0.4f, 1.0f, 0.5f, 1.0f),
-                         .message = "It weighs " + std::to_string(weight) + (weight == 1 ? " pound." : " pounds."),
+                         .message = "It weighs " + std::to_string(caught.pounds) +
+                                    (caught.pounds == 1 ? " pound." : " pounds.") +
+                                    (caught.newRecord ? " New record!" : ""),
                          .messageColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f),
                          .remainingTime = 6.0f });
-}
-
-// The pickups that popped out of the catch
-void AnnounceRewards(const PlayAsLinkFishingRewards::Given& given) {
-    std::string message;
-    if (given.eggs > 0) {
-        message = std::to_string(given.eggs) + (given.eggs == 1 ? " egg" : " eggs");
+    std::string rewards;
+    if (caught.eggs > 0) {
+        rewards = std::to_string(caught.eggs) + (caught.eggs == 1 ? " egg" : " eggs");
     }
-    if (given.notes > 0) {
-        message +=
-            (message.empty() ? "" : " and ") + std::to_string(given.notes) + (given.notes == 1 ? " note" : " notes");
+    if (caught.notes > 0) {
+        rewards +=
+            (rewards.empty() ? "" : " and ") + std::to_string(caught.notes) + (caught.notes == 1 ? " note" : " notes");
     }
-    if (message.empty()) {
-        return;
+    if (!rewards.empty()) {
+        Notification::Emit({ .prefix = "Reward!",
+                             .prefixColor = ImVec4(1.0f, 0.85f, 0.3f, 1.0f),
+                             .message = rewards + " popped out.",
+                             .messageColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f),
+                             .remainingTime = 6.0f });
     }
-    Notification::Emit({ .prefix = "Reward!",
-                         .prefixColor = ImVec4(1.0f, 0.85f, 0.3f, 1.0f),
-                         .message = message + " popped out.",
-                         .messageColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f),
-                         .remainingTime = 6.0f });
 }
 
 PlayAsLinkFish::Frame MakeFishFrame(const State& s, const Input& in, float dt) {
@@ -957,6 +979,33 @@ void TickRod(State& s, const PlayAsLinkFish::Fight& fight, bool onTheLine) {
     }
 }
 
+// The line's strain as the player sees and hears it: the rod's shudder and the creak both grow with the tension the
+// fish module keeps (it decides when the line snaps)
+void UpdateStrain(State& s, float tension, float dt) {
+    if (s.phase != Phase::Hooked) {
+        tension = 0.0f;
+    }
+    Approach(s.tension, tension, 12.0f, dt);
+    s.shakeTime += dt;
+    s.creakTimer -= dt;
+    // The camera keeps well back during a fight, so the rod's strain is small on screen: say it too
+    if (s.tension >= kWarnFrom && !s.strainWarned) {
+        s.strainWarned = true;
+        Notification::Emit({ .prefix = "Line straining!",
+                             .prefixColor = ImVec4(1.0f, 0.6f, 0.3f, 1.0f),
+                             .message = "Ease off A!",
+                             .messageColor = ImVec4(0.9f, 0.9f, 0.9f, 1.0f),
+                             .remainingTime = 2.5f });
+    } else if (s.tension < kWarnFrom - 0.3f) {
+        s.strainWarned = false;
+    }
+    if (s.tension >= kCreakFrom && s.creakTimer <= 0.0f) {
+        const float t = (s.tension - kCreakFrom) / (1.0f - kCreakFrom);
+        gcsfx_playWithPitch(SFX_69_WHIPCRACK_CREAKING, 0.85f + 0.4f * t, 14000 + (int)(10000.0f * t));
+        s.creakTimer = 1.0f + (kCreakSeconds - 1.0f) * t;
+    }
+}
+
 // What the fish did this frame: the bite, the hook, the catch or the escape
 void OnFish(PlayAsLinkFishing::Fishing::Data& data, State& s, const PlayAsLinkFish::Result& result) {
     const PlayAsLinkFish::Fight& fight = PlayAsLinkFish::GetFight(*data.school);
@@ -988,6 +1037,22 @@ void OnFish(PlayAsLinkFishing::Fishing::Data& data, State& s, const PlayAsLinkFi
         s.catchLength = fight.length;
         s.catchLoach = fight.loach;
         s.hitTicks = 0;
+    } else if (result.snapped) {
+        // The line breaks and the fish is gone. OoT would lose the lure; here Link just has the rod ready again,
+        // with the lure back at its tip.
+        Notification::Emit({ .prefix = "The line snapped!",
+                             .prefixColor = ImVec4(1.0f, 0.4f, 0.3f, 1.0f),
+                             .message = "Ease off when a big fish pulls.",
+                             .messageColor = ImVec4(0.9f, 0.9f, 0.9f, 1.0f),
+                             .remainingTime = 4.0f });
+        gcsfx_playWithPitch(SFX_111_WHIPCRACK_DEATH, 1.2f, 26000);
+        s.tension = 0.0f;
+        s.flick = 1.0f; // the rod whips back
+        s.hitTicks = 0;
+        s.returnTime = 0.0f;
+        std::memcpy(s.returnFrom, s.mouth, sizeof(s.returnFrom));
+        s.lurePitch = 0.0f;
+        s.phase = Phase::Returning;
     } else if (result.gotAway) {
         // The lure is where the fish had it, afloat again
         const bool missed = result.missed;
@@ -1057,10 +1122,10 @@ LinkPose GetLinkPose(const Fishing& fishing) {
         pose.leanX = s.leanX;
         pose.leanY = s.leanY;
     }
-    pose.tilt = s.bodyLean * kPi / 32768.0f;
+    pose.tilt = s.bodyLean * kPi / 32768.0f + std::sin(s.shakeTime * 41.0f) * kStrainBodyShake * s.tension * s.tension;
     if (s.phase == Phase::Catching) {
         pose.catching = s.catchReleased ? LinkPose::CatchEnd : LinkPose::CatchHold;
-        pose.catchFrame = (s.catchReleased ? s.catchTime - kCatchHoldSeconds : s.catchTime) * 30.0f;
+        pose.catchFrame = (s.catchReleased ? s.catchTime - s.releaseTime : s.catchTime) * 30.0f;
     }
     return pose;
 }
@@ -1103,7 +1168,9 @@ void Update(Fishing& fishing, float dt) {
         }
         return;
     }
-    if (!valid || in.downPressed) {
+    // The catch's dialog box has the player's attention: the rod stays out until it is dismissed
+    const bool boxUp = s.phase == Phase::Catching && PlayAsLinkFishingCatch::IsCatchShown();
+    if (!valid || (in.downPressed && !boxUp)) {
         Release(data);
         return;
     }
@@ -1147,6 +1214,7 @@ void Update(Fishing& fishing, float dt) {
                                      : in.a                                               ? 0.04f
                                                                                           : 0.12f),
                              90.0f);
+        sagTarget *= 1.0f - 0.8f * s.tension; // a line under strain is drawn straight
     }
     Approach(s.sag, sagTarget, 4.0f, dt);
 
@@ -1213,23 +1281,45 @@ void Update(Fishing& fishing, float dt) {
         }
         case Phase::Catching:
             s.catchTime += dt;
-            if (!s.catchTextShown && s.catchTime >= kCatchTextSeconds) {
-                s.catchTextShown = true;
-                AnnounceCatch(s);
+            if (!s.catchCounted && s.catchTime >= kCatchTextSeconds) {
+                // The fish is in Link's hands: it counts, and what it earns pops out
+                s.catchCounted = true;
+                const int pounds = FishWeight(s.catchLength, s.catchLoach);
                 float player[3];
                 PlayerPosition(player);
-                AnnounceRewards(PlayAsLinkFishingRewards::Give(FishWeight(s.catchLength, s.catchLoach), s.catchLoach,
-                                                               player, yaw_get()));
+                const PlayAsLinkFishingRewards::Given given =
+                    PlayAsLinkFishingRewards::Give(pounds, s.catchLoach, player, yaw_get());
+                s.catchInfo.pounds = pounds;
+                s.catchInfo.loach = s.catchLoach;
+                s.catchInfo.newRecord = PlayAsLinkFishingCatch::RecordCatch(pounds, s.catchLoach);
+                s.catchInfo.eggs = given.eggs;
+                s.catchInfo.notes = given.notes;
             }
-            if (!s.catchReleased && s.catchTime >= kCatchHoldSeconds) {
-                // Back in the water
-                s.catchReleased = true;
-                Pond pond(s);
-                float player[3];
-                PlayerPosition(player);
-                PlayAsLinkFish::ReleaseCaught(*data.school, pond, player, yaw_get());
+            if (s.catchCounted && !s.catchTextShown) {
+                // Link keeps the fish up and the camera stays on him until the player has read the box
+                if (PlayAsLinkFishingCatch::ShowCatch(s.catchInfo)) {
+                    s.catchTextShown = true;
+                } else if ((s.catchBoxWait += dt) >= kCatchBoxGiveUpSeconds) {
+                    s.catchTextShown = true;
+                    s.catchBoxFallback = true;
+                    s.catchFallbackTime = s.catchTime;
+                    AnnounceCatchFallback(s.catchInfo);
+                }
             }
-            if (s.catchReleased && s.catchTime >= kCatchHoldSeconds + kCatchEndSeconds) {
+            if (s.catchTextShown && !s.catchReleased) {
+                const bool read = s.catchBoxFallback ? s.catchTime >= s.catchFallbackTime + kCatchHoldSeconds
+                                                     : !PlayAsLinkFishingCatch::IsCatchShown();
+                if (read) {
+                    // Back in the water
+                    s.catchReleased = true;
+                    s.releaseTime = s.catchTime;
+                    Pond pond(s);
+                    float player[3];
+                    PlayerPosition(player);
+                    PlayAsLinkFish::ReleaseCaught(*data.school, pond, player, yaw_get());
+                }
+            }
+            if (s.catchReleased && s.catchTime >= s.releaseTime + kCatchEndSeconds) {
                 // The lure comes back to the rod from where the fish was held
                 s.returnTime = 0.0f;
                 std::memcpy(s.returnFrom, s.mouth, sizeof(s.returnFrom));
@@ -1254,6 +1344,7 @@ void Update(Fishing& fishing, float dt) {
         const PlayAsLinkFish::Result result = PlayAsLinkFish::Update(*data.school, pond, MakeFishFrame(s, in, dt));
         s.wiggleLevel = 0;
         OnFish(data, s, result);
+        UpdateStrain(s, PlayAsLinkFish::GetFight(*data.school).tension, dt);
     }
     s.prevStickX = in.stickX;
     s.prevStickY = in.stickY;
@@ -1313,10 +1404,14 @@ void Draw(Fishing& fishing, Gfx** gfx, Mtx** mtx, const MtxF& hand, const MtxF& 
     MtxRotateZ(rod, s.leanX * 0.5f + 3.0f * kPi / 20.0f);
     MtxRotateX(rod, (s.rodTilt + 20.0f) * 0.01f * kPi);
     MtxScale(rod, 0.70000005f, 0.70000005f, 0.70000005f);
-    const float bend = s.bendX + s.flick + s.fightBend * (((s.leanY - 1.0f) * -0.25f) + 0.5f);
+    // Under strain the rod bends further and shudders
+    const float strain = s.tension * s.tension;
+    const float bend = s.bendX + s.flick + s.fightBend * (((s.leanY - 1.0f) * -0.25f) + 0.5f) -
+                       kStrainBend * s.tension + std::sin(s.shakeTime * 58.0f) * kStrainShudder * strain;
+    const float sway = s.bendY + std::sin(s.shakeTime * 47.0f + 1.3f) * kStrainShudder * 0.7f * strain;
     MtxTranslate(rod, 0.0f, 0.0f, -1300.0f);
     for (int i = 0; i < 22; i++) {
-        MtxRotateY(rod, s.bendY * kRodBendRatios[i] * 0.5f);
+        MtxRotateY(rod, sway * kRodBendRatios[i] * 0.5f);
         MtxRotateX(rod, bend * kRodBendRatios[i] * 0.5f);
 
         MtxF segment = rod;
@@ -1439,7 +1534,9 @@ void Draw(Fishing& fishing, Gfx** gfx, Mtx** mtx, const MtxF& hand, const MtxF& 
                         G_TD_CLAMP | G_TP_PERSP | G_CYC_1CYCLE | G_PM_NPRIMITIVE,
                     G_AC_NONE | G_ZS_PIXEL | G_RM_AA_ZB_XLU_SURF | G_RM_AA_ZB_XLU_SURF2);
     gDPSetCombineMode((*gfx)++, G_CC_PRIMITIVE, G_CC_PRIMITIVE);
-    gDPSetPrimColor((*gfx)++, 0, 0, 255, 255, 255, 150);
+    // The line reddens as it nears snapping
+    const u8 fade = (u8)(255.0f * (1.0f - 0.75f * s.tension));
+    gDPSetPrimColor((*gfx)++, 0, 0, 255, fade, fade, (u8)(150.0f + 100.0f * s.tension));
     *(*gfx)++ = MakeGfx(0xD9000000, 0x00000001 | 0x00000004); // G_GEOMETRYMODE: G_ZBUFFER | G_SHADE, nothing else
 
     // A sagging curve from the rod's tip to the lure's eye. Where it dips below the water it lies on the surface.
