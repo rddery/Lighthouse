@@ -996,7 +996,7 @@ void TranslateRotateZYX(MtxF* m, const float translation[3], const int16_t rotat
     }
 }
 
-struct DrawState {
+struct LimbDrawState {
     LinkModel* model;
     const Pose* pose;
     Mtx* matrices;
@@ -1008,7 +1008,7 @@ struct DrawState {
 };
 
 // The display list of a limb, with the hands and back swapped for the gear Link is showing
-Gfx* LimbList(const DrawState& state, int index) {
+Gfx* LimbList(const LimbDrawState& state, int index) {
     const LinkModel& model = *state.model;
     switch (state.gear) {
         case Gear::Sword:
@@ -1038,7 +1038,7 @@ constexpr uintptr_t kF3dex2Dl = 0xDE000000;  // G_DL, pushed
 
 // SkelAnime_DrawFlexLimbLod: every limb with a display list gets the next matrix (the lists reach each other's
 // matrices through segment 0x0D)
-void DrawLimb(DrawState& state, int index, const MtxF& parent) {
+void DrawLimb(LimbDrawState& state, int index, const MtxF& parent) {
     const Limb& limb = state.model->limbs[index];
     MtxF m = parent;
     float translation[3];
@@ -1374,7 +1374,7 @@ void PlayAsLink_draw(Gfx** gfx, Mtx** mtx, const MtxF* modelMatrix, s32 kazooieF
     *(*gfx)++ = MakeGfx(0xD7000002, 0xFFFFFFFF); // G_TEXTURE: on, full scale
     // G_GEOMETRYMODE: G_ZBUFFER | G_SHADE | G_CULL_BACK | G_LIGHTING | G_SHADING_SMOOTH
     *(*gfx)++ = MakeGfx(0xD9000000, 0x00000001 | 0x00000004 | 0x00000400 | 0x00020000 | 0x00200000);
-    DrawState state = { model, &pose, matrices, 0, gfx, choice.gear, {}, {} };
+    LimbDrawState state = { model, &pose, matrices, 0, gfx, choice.gear, {}, {} };
     DrawLimb(state, 0, base);
     if (model->fishing != nullptr) {
         PlayAsLinkFishing::Draw(*model->fishing, gfx, mtx, state.leftHand, state.rightHand);

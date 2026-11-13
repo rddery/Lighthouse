@@ -1603,10 +1603,11 @@ int Spawn(School& school, World& world, const float center[3], const float playe
             const float dz = d.cells[i].z * kUnit - player[2];
             const float distance = std::sqrt(dx * dx + dz * dz);
             const float angle = std::abs(std::remainder(std::atan2(dx, dz) - yaw, 2.0f * kPi));
-            const bool near = distance >= (pass == 2 ? 150.0f : 250.0f);
-            const bool far = distance <= (pass == 0 ? 1000.0f : 1400.0f);
+            // (not "near"/"far": Windows' headers define those as empty macros)
+            const bool notTooClose = distance >= (pass == 2 ? 150.0f : 250.0f);
+            const bool inReach = distance <= (pass == 0 ? 1000.0f : 1400.0f);
             const bool ahead = pass == 2 || angle < 80.0f * kPi / 180.0f;
-            if (near && far && ahead) {
+            if (notTooClose && inReach && ahead) {
                 candidates.push_back(i);
             }
         }
